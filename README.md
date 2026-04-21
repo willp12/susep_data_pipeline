@@ -55,15 +55,26 @@ polars e dbt-bigquery, reportar antes de prosseguir.
 
 ## Primeira execução (bootstrap de infra)
 
-> Estes passos ficam disponíveis após o **Checkpoint 2**. Atualmente o diretório
-> `scripts/bootstrap/` está vazio.
-
-1. Instalar `aws` e `gcloud` CLIs.
+1. Instalar `aws` e `gcloud` CLIs (o `gcloud` também traz o `bq`). Ter `jq`
+   instalado (usado pelo preflight).
 2. `aws configure` (usa profile default) e `gcloud auth application-default login`.
 3. `gcloud config set project <id-do-projeto-pessoal>`.
 4. Copiar `.env.example` para `.env` e preencher `GCP_PROJECT_ID`.
-5. `bash scripts/bootstrap/run_all.sh` — cria bucket S3, habilita APIs GCP, cria
-   datasets BigQuery e a tabela `ingestion_log`.
+5. `make bootstrap` (ou `bash scripts/bootstrap/run_all.sh`).
+
+Os scripts são **idempotentes** — podem ser re-rodados sem erro; convergem a
+configuração viva pro estado desejado em vez de recriar recursos:
+
+| Script                    | O que faz                                                              |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `00_preflight.sh`         | Valida AWS/GCP creds, `.env`, CLIs, e pede confirmação interativa.     |
+| `01_aws_s3.sh`            | Cria bucket `susep-ses-data` (ou converge config se já existir): block public access, versioning, SSE-S3, lifecycle (raw → Glacier IR após 30d; expira noncurrent versions), tags. |
+| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com` e `storage.googleapis.com`.         |
+| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze` e `susep_ses_staging` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. **Nunca faz DELETE/DROP.** |
+| `run_all.sh`              | Roda `00 → 01 → 02 → 03`, para no primeiro erro.                        |
+
+Para rodar não-interativamente (pular o prompt de confirmação do preflight),
+setar `BOOTSTRAP_ASSUME_YES=1`.
 
 ## Desenvolvimento
 
