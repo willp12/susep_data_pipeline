@@ -1,0 +1,13 @@
+# Force LF line endings on shell scripts and text files that must stay LF
+# across Windows/macOS/Linux checkouts. This keeps bash scripts executable
+# on CI and prevents `env: bash\r: No such file or directory` errors.
+
+*.sh        text eol=lf
+Makefile    text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.py        text eol=lf
+*.sql       text eol=lf
+.env.example text eol=lf
