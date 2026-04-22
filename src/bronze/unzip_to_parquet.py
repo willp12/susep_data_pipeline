@@ -1,32 +1,29 @@
-"""Bronze step: raw zip in S3 → extracted CSV → parquet in S3 bronze/.
+"""Bronze step: local raw zip → extracted CSV → parquet in S3 bronze/.
 
-For the MVP we only extract **one** CSV from the zip — ``ses_seguros.csv`` —
-per the project scope in CLAUDE.md. Other CSVs in the zip are Phase 2.
+The zip is downloaded **once** by the caller (``src/main.py``) to a shared
+tempdir and handed to us as a local ``Path``. Earlier this function pulled
+the zip from S3 itself, which wasted ~560 MB of egress per CSV in the
+Fase 2 loop over ``REGISTRY``. One download, N extractions.
 
-Encoding + format (confirmed with the owner, not guessed):
-    separator = ';'
-    encoding  = 'latin-1'
-    decimal   = ','   (European; thousand separator varies, rely on polars)
+What this function does (per CSV):
 
-polars 1.40's ``read_csv`` only speaks ``utf8`` / ``utf8-lossy``, so we
-stream-transcode latin-1 → utf-8 into a sibling temp file and hand *that* to
-polars. Transcoding in Python is ~50-100 MB/s which is fine for a single
-300 MB CSV; streaming keeps memory flat.
+1. Extract the target CSV out of the local zip (``spec.csv_name``,
+   case-sensitive — SUSEP ships mixed-case filenames).
+2. Stream-transcode the CSV from ``spec.encoding`` (usually latin-1) to
+   utf-8 so polars 1.40 can read it (polars only accepts utf8 / utf8-lossy).
+3. Read it as all-``pl.String`` (no schema inference — the European decimal
+   comma + mixed types across rows would trip polars' 10k-row sampler;
+   casts belong in dbt staging anyway).
+4. Apply the lenient schema contract (see ``src.ingestion.schema_contract``)
+   — missing columns become null, extras fold into ``_extras`` JSON.
+5. Stamp provenance columns and write a snappy parquet to
+   ``s3://{bucket}/bronze/{spec.table_name}/ingestion_date={date}/
+   {spec.table_name}_{YYYYMMDDTHHMMSSZ}.parquet``.
 
-Output key layout (Hive-style, so downstream BQ external tables / dbt can
-partition on it cheaply):
-
-    s3://{bucket}/bronze/ses_seguros/ingestion_date={YYYY-MM-DD}/
-        ses_seguros_{YYYYMMDDTHHMMSSZ}.parquet
-
-Two columns added to every row:
-    _ingestion_date   DATE    — run date (UTC), matches Hive prefix
-    _source_file_name STRING  — "ses_seguros.csv" for now, lets us union
-                                Phase-2 CSVs into a single table later
-
-Not in scope here: loading to BigQuery, schema validation, dedup against
-existing bronze (re-runs will just add another parquet under the same Hive
-prefix — BQ external table reads both, dbt handles dedup).
+Final column order written to parquet:
+``list(spec.expected_columns) + [_ingestion_date, _source_file_name, _extras]``.
+Stable across runs and across CSV specs so downstream BQ loads / dbt models
+don't care whether SUSEP dropped or renamed a column this month.
 """
 
 from __future__ import annotations
@@ -42,33 +39,15 @@ import polars as pl
 import structlog
 
 from src.config import get_settings
+from src.csv_registry import CsvSpec, get_spec
+from src.ingestion.schema_contract import apply_schema_contract
 
 log = structlog.get_logger(__name__)
 
-# SUSEP ships the file as "Ses_seguros.csv" (capitalised). CLAUDE.md had it
-# lowercase; the real zip we downloaded settles the question.
-TARGET_CSV_NAME = "Ses_seguros.csv"
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("s3://"):
-        raise ValueError(f"Not an s3:// URI: {uri}")
-    rest = uri[len("s3://") :]
-    if "/" not in rest:
-        raise ValueError(f"s3:// URI missing key: {uri}")
-    bucket, key = rest.split("/", 1)
-    return bucket, key
-
-
-def _download_raw_zip(s3_uri: str, dest: Path) -> None:
-    bucket, key = _parse_s3_uri(s3_uri)
-    log.info("bronze.download.start", uri=s3_uri, dest=str(dest))
-    boto3.client("s3").download_file(bucket, key, str(dest))
-    log.info("bronze.download.ok", uri=s3_uri, bytes=dest.stat().st_size)
-
-
-def _extract_target_csv(zip_path: Path, dest_dir: Path, target: str = TARGET_CSV_NAME) -> Path:
+def _extract_target_csv(zip_path: Path, dest_dir: Path, target: str) -> Path:
     """Extract a single named CSV. Fails loud with the zip's contents listed."""
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
@@ -95,11 +74,16 @@ def _extract_target_csv(zip_path: Path, dest_dir: Path, target: str = TARGET_CSV
     return out
 
 
-def _transcode_latin1_to_utf8(src: Path, dst: Path) -> None:
-    """Stream-rewrite a latin-1 CSV as utf-8 so polars can read it."""
-    log.info("bronze.transcode.start", src=str(src), dst=str(dst))
+def _transcode_to_utf8(src: Path, dst: Path, *, encoding: str) -> None:
+    """Stream-rewrite ``src`` (read as ``encoding``) as utf-8 into ``dst``."""
+    log.info(
+        "bronze.transcode.start",
+        src=str(src),
+        dst=str(dst),
+        encoding=encoding,
+    )
     with (
-        src.open("r", encoding="latin-1", newline="") as rfh,
+        src.open("r", encoding=encoding, newline="") as rfh,
         dst.open("w", encoding="utf-8", newline="") as wfh,
     ):
         while True:
@@ -110,18 +94,18 @@ def _transcode_latin1_to_utf8(src: Path, dst: Path) -> None:
     log.info("bronze.transcode.ok", bytes=dst.stat().st_size)
 
 
-def _read_csv(utf8_path: Path) -> pl.DataFrame:
-    """Read the SUSEP CSV preserving every column as String.
+def _read_csv(utf8_path: Path, *, separator: str) -> pl.DataFrame:
+    """Read the CSV preserving every column as String.
 
-    Bronze is the raw-ish layer — typing belongs in dbt staging
-    (``stg_ses_seguros`` per CLAUDE.md). Reading as String also side-steps
-    polars' schema inference on 10k sample rows, which can't see later rows
-    that flip an inferred ``i64`` to a float (first run here tripped on
-    ``consorciosefundos`` at row >10k with value ``108252392,92``).
+    Bronze is the raw-ish layer — typing belongs in dbt staging. Reading as
+    String also side-steps polars' schema inference on 10k sample rows,
+    which can't see later rows that flip an inferred ``i64`` to a float
+    (the first ``Ses_seguros`` run tripped on ``consorciosefundos`` at
+    row >10k with value ``108252392,92``).
     """
     return pl.read_csv(
         utf8_path,
-        separator=";",
+        separator=separator,
         infer_schema=False,  # read every column as pl.String
         try_parse_dates=False,
     )
@@ -137,10 +121,10 @@ def _add_bronze_columns(
     )
 
 
-def _build_parquet_key(*, ingestion_date: date, run_ts: datetime) -> str:
+def _build_parquet_key(*, table_name: str, ingestion_date: date, run_ts: datetime) -> str:
     date_part = ingestion_date.isoformat()
     ts_part = run_ts.strftime("%Y%m%dT%H%M%SZ")
-    return f"bronze/ses_seguros/ingestion_date={date_part}/ses_seguros_{ts_part}.parquet"
+    return f"bronze/{table_name}/ingestion_date={date_part}/{table_name}_{ts_part}.parquet"
 
 
 def _upload_parquet(local_path: Path, bucket: str, key: str) -> str:
@@ -151,42 +135,67 @@ def _upload_parquet(local_path: Path, bucket: str, key: str) -> str:
     return uri
 
 
-def run_bronze_build(raw_s3_uri: str) -> dict[str, str | int]:
-    """End-to-end bronze build for one raw zip. Returns a summary dict."""
+def run_bronze_build(local_zip_path: Path, spec: CsvSpec) -> dict[str, str | int]:
+    """Extract one CSV from a local zip, shape it, write parquet to S3.
+
+    ``local_zip_path`` must already be on disk — see module docstring. The
+    caller (``main.py``) is responsible for fetching the zip once per run.
+    Returns a summary dict suitable for logging + downstream chaining.
+    """
     settings = get_settings()
     run_ts = datetime.now(UTC)
     ingestion_date = run_ts.date()
 
-    with tempfile.TemporaryDirectory(prefix="susep-bronze-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix=f"susep-bronze-{spec.table_name}-") as tmpdir:
         tmp = Path(tmpdir)
-        zip_path = tmp / "raw.zip"
-        _download_raw_zip(raw_s3_uri, zip_path)
 
-        latin1_csv = _extract_target_csv(zip_path, tmp)
-        utf8_csv = tmp / "ses_seguros.utf8.csv"
-        _transcode_latin1_to_utf8(latin1_csv, utf8_csv)
+        raw_csv = _extract_target_csv(local_zip_path, tmp, spec.csv_name)
+        utf8_csv = tmp / f"{spec.table_name}.utf8.csv"
+        _transcode_to_utf8(raw_csv, utf8_csv, encoding=spec.encoding)
 
-        df = _read_csv(utf8_csv)
-        log.info("bronze.read.ok", rows=df.height, cols=df.width)
-
-        df = _add_bronze_columns(
-            df, ingestion_date=ingestion_date, source_file_name=TARGET_CSV_NAME
+        df = _read_csv(utf8_csv, separator=spec.separator)
+        log.info(
+            "bronze.read.ok",
+            spec=spec.table_name,
+            rows=df.height,
+            cols=df.width,
         )
 
-        parquet_name = f"ses_seguros_{run_ts.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+        # Lenient schema reshape — missing -> null, extras -> _extras JSON.
+        df = apply_schema_contract(df, spec)
+
+        # Provenance columns are stamped AFTER the contract so they don't
+        # risk colliding with a (hypothetical) expected column named the
+        # same thing. Final column order is locked here.
+        df = _add_bronze_columns(df, ingestion_date=ingestion_date, source_file_name=spec.csv_name)
+        final_order = [
+            *spec.expected_columns,
+            "_ingestion_date",
+            "_source_file_name",
+            "_extras",
+        ]
+        df = df.select(final_order)
+
+        parquet_name = f"{spec.table_name}_{run_ts.strftime('%Y%m%dT%H%M%SZ')}.parquet"
         parquet_local = tmp / parquet_name
         df.write_parquet(parquet_local, compression="snappy")
         parquet_bytes = parquet_local.stat().st_size
         log.info(
             "bronze.parquet.write.ok",
+            spec=spec.table_name,
             path=str(parquet_local),
             bytes=parquet_bytes,
         )
 
-        key = _build_parquet_key(ingestion_date=ingestion_date, run_ts=run_ts)
+        key = _build_parquet_key(
+            table_name=spec.table_name,
+            ingestion_date=ingestion_date,
+            run_ts=run_ts,
+        )
         uri = _upload_parquet(parquet_local, settings.aws_s3_bucket, key)
 
     return {
+        "spec": spec.table_name,
         "bronze_s3_uri": uri,
         "rows": df.height,
         "cols": df.width,
@@ -196,6 +205,7 @@ def run_bronze_build(raw_s3_uri: str) -> dict[str, str | int]:
 
 
 def main() -> int:
+    """CLI smoke test: ``python -m src.bronze.unzip_to_parquet <zip> <table>``."""
     structlog.configure(
         processors=[
             structlog.processors.add_log_level,
@@ -203,14 +213,15 @@ def main() -> int:
             structlog.dev.ConsoleRenderer(),
         ]
     )
-    if len(sys.argv) != 2:
+    if len(sys.argv) != 3:
         print(
-            "Usage: python -m src.bronze.unzip_to_parquet s3://bucket/raw/...zip",
+            "Usage: python -m src.bronze.unzip_to_parquet <local_zip_path> <table_name>",
             file=sys.stderr,
         )
         return 2
     try:
-        result = run_bronze_build(sys.argv[1])
+        spec = get_spec(sys.argv[2])
+        result = run_bronze_build(Path(sys.argv[1]), spec)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
