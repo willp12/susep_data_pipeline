@@ -15,6 +15,7 @@ layout, we dump the raw HTML snippet and fail loud.
 
 from __future__ import annotations
 
+import ssl
 import sys
 import time
 from dataclasses import dataclass
@@ -27,11 +28,16 @@ from selectolax.parser import HTMLParser
 
 from src.config import get_settings
 
-# SUSEP (and other .gov.br domains) serves an ICP-Brasil certificate chain
-# that the certifi bundle does not include. Use the OS trust store instead,
-# which on Windows/macOS already trusts ICP-Brasil, and on Linux uses the
-# system CA bundle the admin manages.
-truststore.inject_into_ssl()
+# SUSEP (and other .gov.br domains) serve an ICP-Brasil certificate chain that
+# the certifi bundle does not include. We use truststore's SSLContext which
+# defers to the OS trust store (Windows/macOS already trust ICP-Brasil; Linux
+# uses the system CA bundle).
+#
+# We pass this context only to httpx calls that hit SUSEP — doing a global
+# ``truststore.inject_into_ssl()`` breaks boto3 S3 multipart uploads with
+# "maximum recursion depth exceeded" because urllib3's SSL-wrapping path
+# recurses through the patched default SSLContext.
+SUSEP_SSL_CONTEXT = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 log = structlog.get_logger(__name__)
 
@@ -67,9 +73,15 @@ def fetch_page(url: str, *, max_attempts: int = 3) -> str:
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = httpx.get(url, headers=_HEADERS, timeout=_TIMEOUT, follow_redirects=True)
+            resp = httpx.get(
+                url,
+                headers=_HEADERS,
+                timeout=_TIMEOUT,
+                follow_redirects=True,
+                verify=SUSEP_SSL_CONTEXT,
+            )
             resp.raise_for_status()
-            return resp.text
+            return str(resp.text)
         except (httpx.HTTPError, httpx.TransportError) as exc:
             last_exc = exc
             if attempt < max_attempts:
