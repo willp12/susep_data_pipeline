@@ -86,35 +86,31 @@ aws s3api put-bucket-encryption --bucket "${BUCKET}" \
 
 # --- Lifecycle ---------------------------------------------------------------
 # raw/   : transition to Glacier Instant Retrieval after 30d; expire noncurrent versions after 90d.
-# bronze/: stays in Standard (no rule needed, but we document an empty NoncurrentVersionExpiration for parity).
+# bronze/: stays in Standard (noncurrent versions pruned after 365d).
+#
+# Inline JSON (not file://) for cross-platform: AWS CLI on Windows does not
+# interpret POSIX /tmp paths that git-bash resolves.
 log "Applying lifecycle configuration..."
-LIFECYCLE_JSON="$(mktemp)"
-trap 'rm -f "${LIFECYCLE_JSON}"' EXIT
-
-cat > "${LIFECYCLE_JSON}" <<'EOF'
-{
-  "Rules": [
-    {
-      "ID": "raw-transition-and-expire-noncurrent",
-      "Status": "Enabled",
-      "Filter": { "Prefix": "raw/" },
-      "Transitions": [
-        { "Days": 30, "StorageClass": "GLACIER_IR" }
-      ],
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 90 }
-    },
-    {
-      "ID": "bronze-keep-standard",
-      "Status": "Enabled",
-      "Filter": { "Prefix": "bronze/" },
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 365 }
-    }
-  ]
-}
-EOF
-
 aws s3api put-bucket-lifecycle-configuration --bucket "${BUCKET}" \
-  --lifecycle-configuration "file://${LIFECYCLE_JSON}" >/dev/null
+  --lifecycle-configuration '{
+    "Rules": [
+      {
+        "ID": "raw-transition-and-expire-noncurrent",
+        "Status": "Enabled",
+        "Filter": { "Prefix": "raw/" },
+        "Transitions": [
+          { "Days": 30, "StorageClass": "GLACIER_IR" }
+        ],
+        "NoncurrentVersionExpiration": { "NoncurrentDays": 90 }
+      },
+      {
+        "ID": "bronze-keep-standard",
+        "Status": "Enabled",
+        "Filter": { "Prefix": "bronze/" },
+        "NoncurrentVersionExpiration": { "NoncurrentDays": 365 }
+      }
+    ]
+  }' >/dev/null
 
 # --- Tags --------------------------------------------------------------------
 log "Applying bucket tags..."
