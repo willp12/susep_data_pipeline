@@ -1,0 +1,49 @@
+"""Central config loader.
+
+Reads from the process environment (populated via `.env` by python-dotenv).
+Pydantic does the validation so the rest of the code can rely on typed values.
+"""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILE = _REPO_ROOT / ".env"
+
+
+class Settings(BaseModel):
+    env: str = Field(default="dev")
+    aws_s3_bucket: str = Field(default="susep-ses-data")
+    aws_region: str = Field(default="us-east-1")
+    gcp_project_id: str = Field(default="")
+    gcp_bq_dataset_bronze: str = Field(default="susep_ses_bronze")
+    gcp_bq_dataset_staging: str = Field(default="susep_ses_staging")
+    susep_ses_url: str = Field(
+        default="https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
+    )
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return a cached Settings instance. `.env` is loaded on first access."""
+    if _ENV_FILE.exists():
+        load_dotenv(_ENV_FILE, override=False)
+
+    return Settings(
+        env=os.getenv("ENV", "dev"),
+        aws_s3_bucket=os.getenv("AWS_S3_BUCKET", "susep-ses-data"),
+        aws_region=os.getenv("AWS_REGION", "us-east-1"),
+        gcp_project_id=os.getenv("GCP_PROJECT_ID", ""),
+        gcp_bq_dataset_bronze=os.getenv("GCP_BQ_DATASET_BRONZE", "susep_ses_bronze"),
+        gcp_bq_dataset_staging=os.getenv("GCP_BQ_DATASET_STAGING", "susep_ses_staging"),
+        susep_ses_url=os.getenv(
+            "SUSEP_SES_URL",
+            "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx",
+        ),
+    )
