@@ -1,0 +1,29 @@
+.PHONY: install lint fmt test run dbt-build bootstrap clean
+
+install:
+	uv sync --all-groups
+	uv run pre-commit install
+
+lint:
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy src
+
+fmt:
+	uv run ruff format .
+	uv run ruff check --fix .
+
+test:
+	uv run pytest
+
+run:
+	uv run python -m src.main
+
+dbt-build:
+	cd dbt && uv run dbt build --profiles-dir .
+
+bootstrap:
+	bash scripts/bootstrap/run_all.sh
+
+clean:
+	rm -rf .pytest_cache .ruff_cache .mypy_cache build dist *.egg-info
