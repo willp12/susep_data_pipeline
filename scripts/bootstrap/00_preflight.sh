@@ -35,17 +35,15 @@ fi
 command -v aws    >/dev/null 2>&1 || fail "aws CLI not found on PATH."
 command -v gcloud >/dev/null 2>&1 || fail "gcloud CLI not found on PATH."
 command -v bq     >/dev/null 2>&1 || fail "bq CLI not found on PATH (part of gcloud SDK)."
-command -v jq     >/dev/null 2>&1 || fail "jq not found on PATH."
 
 # --- AWS check ---------------------------------------------------------------
 log "Checking AWS credentials..."
-if ! AWS_IDENTITY="$(aws sts get-caller-identity --output json 2>&1)"; then
+if ! AWS_ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>&1)"; then
   err "aws sts get-caller-identity failed:"
-  printf '%s\n' "${AWS_IDENTITY}" >&2
+  printf '%s\n' "${AWS_ACCOUNT}" >&2
   fail "Run 'aws configure' or export AWS credentials."
 fi
-AWS_ACCOUNT="$(printf '%s' "${AWS_IDENTITY}" | jq -r '.Account')"
-AWS_ARN="$(printf '%s' "${AWS_IDENTITY}"     | jq -r '.Arn')"
+AWS_ARN="$(aws sts get-caller-identity --query Arn --output text)"
 
 # --- GCP check ---------------------------------------------------------------
 log "Checking GCP application-default credentials..."

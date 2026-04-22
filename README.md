@@ -55,8 +55,7 @@ polars e dbt-bigquery, reportar antes de prosseguir.
 
 ## Primeira execução (bootstrap de infra)
 
-1. Instalar `aws` e `gcloud` CLIs (o `gcloud` também traz o `bq`). Ter `jq`
-   instalado (usado pelo preflight).
+1. Instalar `aws` e `gcloud` CLIs (o `gcloud` também traz o `bq`).
 2. `aws configure` (usa profile default) e `gcloud auth application-default login`.
 3. `gcloud config set project <id-do-projeto-pessoal>`.
 4. Copiar `.env.example` para `.env` e preencher `GCP_PROJECT_ID`.
