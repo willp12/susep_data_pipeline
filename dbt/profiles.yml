@@ -1,0 +1,19 @@
+# Repo-local dbt profile. Consumed with `dbt --profiles-dir dbt …` (the
+# Makefile/main.py wrap this). We default to the gcloud application-default
+# credentials so there's no service-account JSON to manage for the MVP.
+#
+# Env vars (with sensible dev defaults) instead of hard-coding the project —
+# keeps this file safe to commit even though it references the real dataset.
+susep_ses:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: "{{ env_var('GCP_BQ_DATASET_STAGING', 'susep_ses_staging') }}"
+      location: "{{ env_var('GCP_BQ_LOCATION', 'US') }}"
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
