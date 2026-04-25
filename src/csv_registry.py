@@ -57,11 +57,16 @@ class CsvSpec:
 
 
 # ---------------------------------------------------------------------------
-# Ses_seguros.csv — 21 columns, captured from the Checkpoint 6 bronze parquet
-# (columns listed in the order they appear in the CSV header, same order polars
-# returned them). Any drift from this list shows up as a warning at bronze
-# time instead of a silent schema change.
+# Column tuples — captured by reading the actual CSV headers out of the SUSEP
+# zip (see ``scripts/ck22_inspect_headers.py`` git history for the inspector).
+#
+# Casing is **literal** to what SUSEP ships, even when it's inconsistent across
+# files (``coenti`` in Ses_seguros vs ``Coenti`` in Ses_cias vs ``GRAID`` in
+# ses_gruposramos). The schema contract treats this as the source of truth;
+# normalisation to a consistent snake_case is the dbt staging layer's job.
 # ---------------------------------------------------------------------------
+
+# Ses_seguros.csv — 21 columns, captured from the Ck 6 bronze parquet.
 _SES_SEGUROS_COLUMNS: tuple[str, ...] = (
     "damesano",
     "coenti",
@@ -86,6 +91,29 @@ _SES_SEGUROS_COLUMNS: tuple[str, ...] = (
     "consorciosefundos",
 )
 
+# Ses_ramos.csv — 2 columns. Reference table mapping ``coramo`` -> ramo name.
+_SES_RAMOS_COLUMNS: tuple[str, ...] = (
+    "coramo",
+    "noramo",
+)
+
+# ses_gruposramos.csv — 3 columns. Reference table for grupos de ramos.
+# UPPERCASE casing is literal from the SUSEP header.
+_SES_GRUPOSRAMOS_COLUMNS: tuple[str, ...] = (
+    "GRAID",
+    "GRANOME",
+    "GRACODIGO",
+)
+
+# Ses_cias.csv — 4 columns. Reference table mapping ``Coenti`` -> seguradora.
+# Capitalised casing is literal from the SUSEP header.
+_SES_CIAS_COLUMNS: tuple[str, ...] = (
+    "Coenti",
+    "Noenti",
+    "Cogrupo",
+    "Nogrupo",
+)
+
 
 REGISTRY: tuple[CsvSpec, ...] = (
     CsvSpec(
@@ -94,6 +122,24 @@ REGISTRY: tuple[CsvSpec, ...] = (
         load_mode="append_partition",
         expected_columns=_SES_SEGUROS_COLUMNS,
         cluster_by=("coenti",),
+    ),
+    CsvSpec(
+        csv_name="Ses_ramos.csv",
+        table_name="ses_ramos",
+        load_mode="truncate_replace",
+        expected_columns=_SES_RAMOS_COLUMNS,
+    ),
+    CsvSpec(
+        csv_name="ses_gruposramos.csv",
+        table_name="ses_gruposramos",
+        load_mode="truncate_replace",
+        expected_columns=_SES_GRUPOSRAMOS_COLUMNS,
+    ),
+    CsvSpec(
+        csv_name="Ses_cias.csv",
+        table_name="ses_cias",
+        load_mode="truncate_replace",
+        expected_columns=_SES_CIAS_COLUMNS,
     ),
 )
 
