@@ -10,6 +10,10 @@
      * Every monetary column -> NUMERIC via the `br_to_numeric` macro.
      * `coenti` stays as STRING (entity code with leading zeros).
 
+   Filter to the most-recent ingestion date so multiple bronze runs of
+   the same SUSEP zip don't multi-count downstream — see the
+   `latest_bronze_partition` macro for the why.
+
    Same scope guardrails as the other staging models — rename + cast
    only, no trim/nullif. Normalisation lives in silver / marts when /
    if a fct_pl_margem is added later.
@@ -31,3 +35,4 @@ select
     _source_file_name
 
 from `{{ env_var('GCP_PROJECT_ID') }}.{{ env_var('GCP_BQ_DATASET_BRONZE', 'susep_ses_bronze') }}.ses_pl_margem`
+where {{ latest_bronze_partition('ses_pl_margem') }}

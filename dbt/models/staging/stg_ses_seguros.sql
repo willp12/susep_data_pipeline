@@ -10,6 +10,10 @@
    Codes (`coenti`, `cogrupo`, `coramo`) stay as STRING — they're IDs with
    leading zeros, not numbers.
 
+   Filter to the most-recent ingestion date so multiple bronze runs of
+   the same SUSEP zip don't multi-count downstream — see the
+   `latest_bronze_partition` macro for the why.
+
    Deliberately *not* doing here:
      * null-standardisation (empty-string vs NULL) — bronze already reads
        empty cells as NULL.
@@ -44,3 +48,4 @@ select
     _source_file_name
 
 from `{{ env_var('GCP_PROJECT_ID') }}.{{ env_var('GCP_BQ_DATASET_BRONZE', 'susep_ses_bronze') }}.ses_seguros`
+where {{ latest_bronze_partition('ses_seguros') }}
