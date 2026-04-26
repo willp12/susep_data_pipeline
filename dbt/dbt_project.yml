@@ -20,3 +20,9 @@ models:
   susep_ses:
     staging:
       +materialized: view
+    marts:
+      # Silver layer (Fase 3). Tables instead of views: dims are small and
+      # joined often, fct_seguros is ~3.5M+ rows where view-on-the-fly casts
+      # would dominate query cost. Partition/cluster knobs for fct_seguros
+      # live in its own {{ config(...) }} block (more local, more readable).
+      +materialized: table
