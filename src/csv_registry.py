@@ -114,6 +114,23 @@ _SES_CIAS_COLUMNS: tuple[str, ...] = (
     "Nogrupo",
 )
 
+# Ses_pl_margem.csv — 9 columns. Monthly fact: solvency snapshot per
+# entity. Mixed-case casing is literal from the SUSEP header
+# (`AjustesContabeis`, `NovoPla`, `CMR`). All seven non-key columns
+# are monetary; bronze keeps them as STRING and the staging view does
+# the br_to_numeric() cast.
+_SES_PL_MARGEM_COLUMNS: tuple[str, ...] = (
+    "coenti",
+    "damesano",
+    "plajustado",
+    "margem",
+    "pl",
+    "AjustesContabeis",
+    "AjustesEconomicos",
+    "NovoPla",
+    "CMR",
+)
+
 
 REGISTRY: tuple[CsvSpec, ...] = (
     CsvSpec(
@@ -140,6 +157,13 @@ REGISTRY: tuple[CsvSpec, ...] = (
         table_name="ses_cias",
         load_mode="truncate_replace",
         expected_columns=_SES_CIAS_COLUMNS,
+    ),
+    CsvSpec(
+        csv_name="Ses_pl_margem.csv",
+        table_name="ses_pl_margem",
+        load_mode="append_partition",
+        expected_columns=_SES_PL_MARGEM_COLUMNS,
+        cluster_by=("coenti",),
     ),
 )
 
