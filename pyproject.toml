@@ -26,6 +26,12 @@ dev = [
     "mypy>=1.11",
     "pre-commit>=3.7",
 ]
+# Insights agent (CP-B onwards). Kept out of the main deps so the ingestion
+# worker doesn't pull the Claude SDK. google-cloud-bigquery is already a
+# core dependency, so the BQ tools work without this group installed.
+agent = [
+    "claude-agent-sdk>=0.1",
+]
 
 [build-system]
 requires = ["hatchling"]
