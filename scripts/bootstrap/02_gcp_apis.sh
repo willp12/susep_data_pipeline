@@ -23,6 +23,9 @@ set +a
 APIS=(
   "bigquery.googleapis.com"
   "storage.googleapis.com"
+  # Required for Workload Identity Federation in GitHub Actions:
+  # `setup-gcloud` impersonates the agent SA via this API.
+  "iamcredentials.googleapis.com"
 )
 
 log "Enabling APIs on project '${GCP_PROJECT_ID}':"
