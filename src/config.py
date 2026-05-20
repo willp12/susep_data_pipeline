@@ -24,6 +24,7 @@ class Settings(BaseModel):
     gcp_project_id: str = Field(default="")
     gcp_bq_dataset_bronze: str = Field(default="susep_ses_bronze")
     gcp_bq_dataset_staging: str = Field(default="susep_ses_staging")
+    gcp_bq_dataset_marts: str = Field(default="susep_ses_marts")
     susep_ses_url: str = Field(
         default="https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
     )
@@ -48,6 +49,7 @@ def get_settings() -> Settings:
         gcp_project_id=os.getenv("GCP_PROJECT_ID", ""),
         gcp_bq_dataset_bronze=os.getenv("GCP_BQ_DATASET_BRONZE", "susep_ses_bronze"),
         gcp_bq_dataset_staging=os.getenv("GCP_BQ_DATASET_STAGING", "susep_ses_staging"),
+        gcp_bq_dataset_marts=os.getenv("GCP_BQ_DATASET_MARTS", "susep_ses_marts"),
         susep_ses_url=os.getenv(
             "SUSEP_SES_URL",
             "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx",

@@ -20,3 +20,6 @@ models:
   susep_ses:
     staging:
       +materialized: view
+    marts:
+      +materialized: table
+      +schema: susep_ses_marts

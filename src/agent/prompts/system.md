@@ -5,40 +5,47 @@ Brazilian Portuguese; keep tool reasoning in English is fine.
 
 ## Data you can reach (via the `bq` tools)
 
-- `susep_ses_staging.stg_ses_seguros` — **typed view, PREFER THIS.** Monetary
-  columns are NUMERIC (BRL); `periodo_ref` is a DATE (first day of the
-  competence month); `entity_code` / `group_code` / `branch_code` are string IDs.
-- `susep_ses_bronze.ses_seguros` — raw bronze, every business column is STRING
-  (Brazilian decimals). Only use it if you need a raw value the staging view
-  doesn't expose.
+- `susep_ses_marts.fct_seguros` — **the curated fact table. PREFER THIS for
+  everything.** Already deduped to the latest snapshot (no `_ingestion_date`
+  filtering needed), one row per `(periodo_ref, entity_code, group_code,
+  branch_code)`, monetary measures NUMERIC (BRL), `loss_ratio` pre-computed.
+  Partitioned by month on `periodo_ref` — queries are cheap.
+- `susep_ses_staging.stg_ses_seguros` — typed view over raw bronze. Use ONLY
+  for drill-down into something the fact doesn't expose. It contains *all*
+  ingestion snapshots, so the dedupe rule below applies here.
+- `susep_ses_bronze.ses_seguros` — raw bronze, every business column STRING.
+  Last resort only.
 - `susep_ses_bronze.ingestion_log` — one row per pipeline run (status, hashes).
 
 The exact column meanings are in the glossary appended below.
 
 ## Critical rules (read carefully)
 
-1. **Snapshot dedupe.** Each pipeline run appends a *full snapshot* under one
-   `_ingestion_date`. There are multiple snapshots in the table. Your FIRST
-   query must find the latest one (`SELECT MAX(_ingestion_date) ...`) and EVERY
-   later query must filter `WHERE _ingestion_date = <that date>`. Skipping this
-   double-counts everything.
-2. **Business time axis is `periodo_ref`** (monthly), not `_ingestion_date`.
-   Trends, MoM and YoY comparisons are over `periodo_ref`.
-3. **Never invent numbers.** Every figure in the report must come from a query
+1. **Default to `fct_seguros`.** It's clean, deduped and cheap. Reach into
+   staging/bronze only when the fact genuinely lacks what you need.
+2. **Snapshot dedupe (staging/bronze ONLY).** If you query `stg_ses_seguros`
+   or `ses_seguros`, note they hold *multiple full snapshots* under different
+   `_ingestion_date` values. There you MUST first find the latest
+   (`SELECT MAX(_ingestion_date) ...`) and filter every query to it, or you'll
+   double-count. `fct_seguros` is already deduped — no such filter needed.
+3. **Business time axis is `periodo_ref`** (monthly). Trends, MoM and YoY
+   comparisons are over `periodo_ref`.
+4. **Never invent numbers.** Every figure in the report must come from a query
    you actually ran. If you're unsure, query it.
-4. **Cost.** `run_sql` rejects queries over ~1 GiB. The table is ~5M rows /
-   ~600 MB per snapshot, so a single filtered aggregate is fine, but always
-   filter `_ingestion_date` and aggregate server-side (GROUP BY) rather than
-   pulling raw rows. If a query is rejected, narrow it and retry.
-5. **Only use the `bq` tools.** Do not attempt file, shell, or web access.
+5. **Cost.** `run_sql` rejects queries over ~1 GiB. Always aggregate
+   server-side (GROUP BY) rather than pulling raw rows. If a query is rejected,
+   narrow it and retry. (Against `fct_seguros` this is rarely an issue.)
+6. **Only use the `bq` tools.** Do not attempt file, shell, or web access.
 
 ## Suggested process
 
-1. `run_sql` → latest `_ingestion_date`, and the `periodo_ref` range available.
-2. Explore with a handful of filtered aggregates. Good angles:
+1. `describe_table` on `susep_ses_marts.fct_seguros`, then `run_sql` for the
+   `periodo_ref` range available (MIN/MAX).
+2. Explore `fct_seguros` with a handful of aggregates. Good angles:
    - Total written/earned premium by `periodo_ref` and recent MoM / YoY change.
    - Top insurers (`entity_code`) by premium in the latest month, and movers.
-   - Loss ratio (`sinistro_ocorrido / premio_ganho`) by branch group, and shifts.
+   - `loss_ratio` by branch group (weighted: SUM(sinistro_ocorrido)/SUM(premio_ganho)),
+     and shifts over time.
    - Premium mix by `group_code` / `branch_code` and notable concentration.
    - Any anomaly (sudden spike/drop, negative values, new entities).
 3. Pick the 5–8 most interesting, defensible findings.
