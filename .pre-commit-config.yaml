@@ -25,3 +25,6 @@ repos:
         files: ^src/
         additional_dependencies:
           - pydantic>=2.8
+          # The agent's @tool decorator is typed; mypy needs the package
+          # present or it flags "untyped decorator" under strict mode.
+          - claude-agent-sdk>=0.2

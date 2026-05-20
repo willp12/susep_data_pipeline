@@ -1,0 +1,139 @@
+version: 2
+
+# Column descriptions here are the glossary the insights agent reads (via
+# `dbt docs generate` → target/manifest.json). First-pass definitions based on
+# the SUSEP SES layout — verify against the official data dictionary at
+# https://www2.susep.gov.br/menuestatistica/SES/principal.aspx and refine over
+# time. The agent leans on these to interpret columns, so wrong text here means
+# wrong insights.
+
+sources:
+  - name: susep_ses_bronze
+    description: >
+      Raw bronze tables loaded from the SUSEP SES zip. Every business column is
+      STRING (Brazilian decimal format preserved verbatim). One full snapshot is
+      appended per pipeline run, partitioned by _ingestion_date — so analytics
+      MUST filter to the latest _ingestion_date to avoid double-counting.
+    tables:
+      - name: ses_seguros
+        description: "Monthly insurance figures per entity/group/branch, raw STRING bronze."
+        columns:
+          - name: damesano
+            description: "Reference competence as YYYYMM text (e.g. '202604')."
+          - name: coenti
+            description: "SUSEP entity (insurer) code. String ID with leading zeros."
+          - name: cogrupo
+            description: "Branch-group code (groups related ramos). String ID."
+          - name: coramo
+            description: "Branch (ramo) code — the specific insurance line. String ID."
+          - name: premio_direto
+            description: "Direct written premium (BRL), raw STRING."
+          - name: premio_de_seguros
+            description: "Insurance premium (BRL), raw STRING."
+          - name: premio_retido
+            description: "Retained premium, net of reinsurance ceded (BRL)."
+          - name: premio_ganho
+            description: "Earned premium for the competence period (BRL)."
+          - name: sinistro_direto
+            description: "Direct claims (BRL)."
+          - name: sinistro_retido
+            description: "Retained claims, net of reinsurance (BRL)."
+          - name: desp_com
+            description: "Commercialisation expense (brokerage/commissions) (BRL)."
+          - name: premio_emitido2
+            description: "Issued premium, alternate measure (BRL)."
+          - name: premio_emitido_cap
+            description: "Issued premium for capitalisation products (BRL)."
+          - name: despesa_resseguros
+            description: "Reinsurance expense / premium ceded (BRL)."
+          - name: sinistro_ocorrido
+            description: "Incurred claims (BRL)."
+          - name: receita_resseguro
+            description: "Reinsurance revenue / recoveries (BRL)."
+          - name: sinistros_ocorridos_cap
+            description: "Incurred claims for capitalisation products (BRL)."
+          - name: recuperacao_sinistros_ocorridos_cap
+            description: "Recovered incurred claims, capitalisation (BRL)."
+          - name: rvne
+            description: "RVNE — risks in force not yet issued (Riscos Vigentes Não Emitidos) (BRL)."
+          - name: conveniodpvat
+            description: "DPVAT agreement figures (mandatory motor third-party) (BRL)."
+          - name: consorciosefundos
+            description: "Consortia and funds figures (BRL)."
+          - name: _ingestion_date
+            description: "Pipeline ingestion date (partition key). Pick MAX for the latest snapshot."
+          - name: _source_file_name
+            description: "Source CSV name inside the SUSEP zip."
+          - name: _extras
+            description: "Overflow column for any extra CSV fields not in the known schema."
+
+      - name: ingestion_log
+        description: "One row per pipeline run; tracks dedupe by file hash and status."
+        columns:
+          - name: ingestion_date
+            description: "Date the run executed (partition key)."
+          - name: file_name
+            description: "Downloaded artifact name (e.g. BaseCompleta.zip)."
+          - name: file_hash
+            description: "SHA256 of the raw zip — drives the no_change/ingested decision."
+          - name: source_url
+            description: "URL the zip was scraped from."
+          - name: status
+            description: "'ingested' | 'no_change' | 'failed'."
+          - name: run_timestamp
+            description: "UTC timestamp of the run."
+
+models:
+  - name: stg_ses_seguros
+    description: >
+      Typed view over bronze ses_seguros. Casts damesano → periodo_ref (DATE,
+      first of month) and every monetary column → NUMERIC. Codes stay STRING.
+      Inherits the snapshot caveat: filter to the latest _ingestion_date.
+      PREFER THIS TABLE over bronze for any numeric analysis.
+    columns:
+      - name: periodo_ref
+        description: "Business time axis: first day of the competence month (DATE), parsed from damesano."
+      - name: entity_code
+        description: "SUSEP insurer code (was coenti). String ID with leading zeros."
+      - name: group_code
+        description: "Branch-group code (was cogrupo)."
+      - name: branch_code
+        description: "Branch/ramo code (was coramo)."
+      - name: premio_direto
+        description: "Direct written premium (BRL, NUMERIC)."
+      - name: premio_de_seguros
+        description: "Insurance premium (BRL, NUMERIC)."
+      - name: premio_retido
+        description: "Retained premium net of reinsurance (BRL, NUMERIC)."
+      - name: premio_ganho
+        description: "Earned premium (BRL, NUMERIC)."
+      - name: sinistro_direto
+        description: "Direct claims (BRL, NUMERIC)."
+      - name: sinistro_retido
+        description: "Retained claims net of reinsurance (BRL, NUMERIC)."
+      - name: desp_com
+        description: "Commercialisation expense / commissions (BRL, NUMERIC)."
+      - name: premio_emitido2
+        description: "Issued premium, alternate measure (BRL, NUMERIC)."
+      - name: premio_emitido_cap
+        description: "Issued premium, capitalisation (BRL, NUMERIC)."
+      - name: despesa_resseguros
+        description: "Reinsurance expense / premium ceded (BRL, NUMERIC)."
+      - name: sinistro_ocorrido
+        description: "Incurred claims (BRL, NUMERIC). Loss ratio = sinistro_ocorrido / premio_ganho."
+      - name: receita_resseguro
+        description: "Reinsurance revenue / recoveries (BRL, NUMERIC)."
+      - name: sinistros_ocorridos_cap
+        description: "Incurred claims, capitalisation (BRL, NUMERIC)."
+      - name: recuperacao_sinistros_ocorridos_cap
+        description: "Recovered incurred claims, capitalisation (BRL, NUMERIC)."
+      - name: rvne
+        description: "Risks in force not yet issued (BRL, NUMERIC)."
+      - name: conveniodpvat
+        description: "DPVAT agreement (BRL, NUMERIC)."
+      - name: consorciosefundos
+        description: "Consortia and funds (BRL, NUMERIC)."
+      - name: _ingestion_date
+        description: "Pipeline ingestion date. Filter to MAX for the latest snapshot."
+      - name: _source_file_name
+        description: "Source CSV name inside the SUSEP zip."
