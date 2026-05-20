@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: fct_seguros
+    description: >
+      Curated fact table of SUSEP SES insurance figures — the insights agent's
+      preferred source. Already deduped to the latest ingestion snapshot, so no
+      _ingestion_date filtering is needed. Grain: one row per (periodo_ref,
+      entity_code, group_code, branch_code). Monetary measures are NUMERIC (BRL),
+      summed at the grain; loss_ratio is pre-computed. Partitioned by month on
+      periodo_ref, clustered by group_code/branch_code — cheap to query.
+    columns:
+      - name: periodo_ref
+        description: "Competence month (DATE, first day). Business time axis for trends/MoM/YoY."
+      - name: entity_code
+        description: "SUSEP insurer code. String ID with leading zeros."
+      - name: group_code
+        description: "Branch-group code (groups related ramos)."
+      - name: branch_code
+        description: "Branch/ramo code — the specific insurance line."
+      - name: premio_direto
+        description: "Direct written premium (BRL)."
+      - name: premio_de_seguros
+        description: "Insurance premium (BRL)."
+      - name: premio_retido
+        description: "Retained premium net of reinsurance (BRL)."
+      - name: premio_ganho
+        description: "Earned premium (BRL). Denominator of loss_ratio."
+      - name: sinistro_direto
+        description: "Direct claims (BRL)."
+      - name: sinistro_retido
+        description: "Retained claims net of reinsurance (BRL)."
+      - name: desp_com
+        description: "Commercialisation expense / commissions (BRL)."
+      - name: premio_emitido2
+        description: "Issued premium, alternate measure (BRL)."
+      - name: premio_emitido_cap
+        description: "Issued premium, capitalisation (BRL)."
+      - name: despesa_resseguros
+        description: "Reinsurance expense / premium ceded (BRL)."
+      - name: sinistro_ocorrido
+        description: "Incurred claims (BRL). Numerator of loss_ratio."
+      - name: receita_resseguro
+        description: "Reinsurance revenue / recoveries (BRL)."
+      - name: sinistros_ocorridos_cap
+        description: "Incurred claims, capitalisation (BRL)."
+      - name: recuperacao_sinistros_ocorridos_cap
+        description: "Recovered incurred claims, capitalisation (BRL)."
+      - name: rvne
+        description: "Risks in force not yet issued (BRL)."
+      - name: conveniodpvat
+        description: "DPVAT agreement (BRL)."
+      - name: consorciosefundos
+        description: "Consortia and funds (BRL)."
+      - name: loss_ratio
+        description: "Pre-computed sinistro_ocorrido / premio_ganho (NULL when earned premium is 0)."
+      - name: _ingestion_date
+        description: "Ingestion date of the snapshot this fact was built from (lineage only — already deduped)."

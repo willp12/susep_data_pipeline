@@ -126,6 +126,7 @@ def main() -> int:
     project = _env("GCP_PROJECT_ID")
     dataset_bronze = _env("GCP_BQ_DATASET_BRONZE", "susep_ses_bronze")
     dataset_staging = _env("GCP_BQ_DATASET_STAGING", "susep_ses_staging")
+    dataset_marts = _env("GCP_BQ_DATASET_MARTS", "susep_ses_marts")
     location = os.environ.get("GCP_BQ_LOCATION", "US")
 
     client = bigquery.Client(project=project)
@@ -141,6 +142,12 @@ def main() -> int:
         dataset_staging,
         location=location,
         description="susep-ses-pipeline dbt staging layer.",
+    )
+    _ensure_dataset(
+        client,
+        dataset_marts,
+        location=location,
+        description="susep-ses-pipeline dbt marts layer (fct/dim — read by the insights agent).",
     )
     _ensure_ingestion_log(client, dataset_bronze)
 
