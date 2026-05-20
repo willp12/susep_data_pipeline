@@ -1,0 +1,46 @@
+name: insights-auth-check
+
+# CP-A: smoke test do WIF + permissão BQ da SA bq-agent-readonly.
+# Por enquanto só workflow_dispatch. Cron entra no CP-E.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  auth-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Authenticate to GCP via Workload Identity Federation
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_AGENT_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Print identity
+        run: |
+          echo "Active account:"
+          gcloud auth list --filter=status:ACTIVE --format="value(account)"
+          echo "Project: ${{ vars.GCP_PROJECT_ID }}"
+
+      - name: Smoke test BigQuery job permission
+        run: |
+          bq query \
+            --use_legacy_sql=false \
+            --project_id=${{ vars.GCP_PROJECT_ID }} \
+            'SELECT 1 AS ok'
+
+      - name: Smoke test BigQuery dataset read
+        run: |
+          bq ls --project_id=${{ vars.GCP_PROJECT_ID }} susep_ses_bronze || \
+            echo "(dataset susep_ses_bronze ainda não existe — esperado se o bootstrap do pipeline ainda não rodou)"
