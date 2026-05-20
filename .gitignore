@@ -211,3 +211,12 @@ dbt/target/
 dbt/dbt_packages/
 dbt/logs/
 dbt/.user.yml
+
+# MCP Toolbox for Databases — local binary, downloaded per-machine.
+# https://googleapis.github.io/genai-toolbox/
+toolbox
+toolbox.exe
+
+# Claude Code machine-local settings + worktrees.
+.claude/settings.local.json
+.claude/worktrees/
