@@ -28,6 +28,12 @@ class Settings(BaseModel):
         default="https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
     )
 
+    # Insights agent (CP-C). The API key is read but never logged.
+    anthropic_api_key: str = Field(default="")
+    agent_model: str = Field(default="sonnet")
+    agent_max_turns: int = Field(default=20)
+    agent_max_budget_usd: float = Field(default=0.50)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -46,4 +52,8 @@ def get_settings() -> Settings:
             "SUSEP_SES_URL",
             "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx",
         ),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        agent_model=os.getenv("AGENT_MODEL", "sonnet"),
+        agent_max_turns=int(os.getenv("AGENT_MAX_TURNS", "20")),
+        agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.50")),
     )
