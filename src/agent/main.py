@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,21 @@ _USER_PROMPT = (
     "Gere o relatório de insights de hoje sobre os dados SUSEP SES. "
     "Siga o processo e respeite o contrato de saída definidos no system prompt."
 )
+
+
+async def _prompt_stream() -> AsyncIterator[dict[str, Any]]:
+    """Yield the user prompt as a streaming message.
+
+    can_use_tool requires streaming input mode, so the prompt must be an async
+    iterable rather than a plain string. We emit one user message; the SDK ends
+    input once this generator is exhausted.
+    """
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": _USER_PROMPT},
+        "parent_tool_use_id": None,
+    }
 
 
 def _build_system_prompt() -> str:
@@ -97,7 +113,7 @@ async def run_agent() -> dict[str, Any]:
     model_used = settings.agent_model
 
     log.info("agent.run.start", model=settings.agent_model)
-    async for message in query(prompt=_USER_PROMPT, options=options):
+    async for message in query(prompt=_prompt_stream(), options=options):
         if isinstance(message, AssistantMessage):
             model_used = message.model or model_used
             for block in message.content:

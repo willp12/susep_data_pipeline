@@ -10,7 +10,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from pydantic import BaseModel, Field
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +40,14 @@ class Settings(BaseModel):
 def get_settings() -> Settings:
     """Return a cached Settings instance. `.env` is loaded on first access."""
     if _ENV_FILE.exists():
+        # Some runners inject env vars as empty strings (e.g. ANTHROPIC_API_KEY="").
+        # An empty inherited var must NOT shadow a real value in .env, so treat
+        # empty as unset before loading. Non-empty env vars are preserved and
+        # still win (override=False) — important for CI, where there's no .env
+        # and the real secrets come from the environment.
+        for key in dotenv_values(_ENV_FILE):
+            if os.environ.get(key) == "":
+                del os.environ[key]
         load_dotenv(_ENV_FILE, override=False)
 
     return Settings(
