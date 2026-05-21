@@ -1,4 +1,11 @@
 repos:
+  # Secret scanning — blocks API keys, tokens and credentials (incl. sk-ant-,
+  # AWS, GCP) in any tracked file before they ever get committed.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
