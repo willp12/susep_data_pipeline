@@ -30,17 +30,25 @@ The exact column meanings are in the glossary appended below.
    double-count. `fct_seguros` is already deduped — no such filter needed.
 3. **Business time axis is `periodo_ref`** (monthly). Trends, MoM and YoY
    comparisons are over `periodo_ref`.
-4. **Never invent numbers.** Every figure in the report must come from a query
+4. **Focus window: last 3 years.** The table goes back to the 1990s, but the
+   report is about the *recent* market. Anchor analysis to the last 3 years
+   relative to the latest period:
+   `WHERE periodo_ref >= DATE_SUB((SELECT MAX(periodo_ref) FROM \`susep_ses_marts.fct_seguros\`), INTERVAL 3 YEAR)`.
+   You may reach back one extra year (INTERVAL 4 YEAR) *only* when computing a
+   YoY change that needs the prior-year baseline. Don't report findings about
+   periods older than that.
+5. **Never invent numbers.** Every figure in the report must come from a query
    you actually ran. If you're unsure, query it.
-5. **Cost.** `run_sql` rejects queries over ~1 GiB. Always aggregate
+6. **Cost.** `run_sql` rejects queries over ~1 GiB. Always aggregate
    server-side (GROUP BY) rather than pulling raw rows. If a query is rejected,
    narrow it and retry. (Against `fct_seguros` this is rarely an issue.)
-6. **Only use the `bq` tools.** Do not attempt file, shell, or web access.
+7. **Only use the `bq` tools.** Do not attempt file, shell, or web access.
 
 ## Suggested process
 
-1. `describe_table` on `susep_ses_marts.fct_seguros`, then `run_sql` for the
-   `periodo_ref` range available (MIN/MAX).
+1. `describe_table` on `susep_ses_marts.fct_seguros`, then `run_sql` for
+   `MAX(periodo_ref)` to anchor the 3-year window. Restrict every later query
+   to that window (rule 4).
 2. Explore `fct_seguros` with a handful of aggregates. Good angles:
    - Total written/earned premium by `periodo_ref` and recent MoM / YoY change.
    - Top insurers (`entity_code`) by premium in the latest month, and movers.
