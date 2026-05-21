@@ -19,7 +19,7 @@
 select
     parse_date('%Y%m%d', damesano || '01')                as periodo_ref,
     coenti                                                 as entity_code,
-    cogrupo                                                as group_code,
+    cogrupo                                                as economic_group_code,
     coramo                                                 as branch_code,
 
     {{ br_to_numeric('premio_direto')                    }} as premio_direto,

@@ -6,9 +6,11 @@
      1. Snapshot dedupe — bronze appends a full snapshot per pipeline run. We
         keep only the latest `_ingestion_date`, so every row is current and
         non-duplicated.
-     2. Grain — one row per (periodo_ref, entity, group, branch). Measures are
-        summed defensively (the source is usually already at this grain) and
-        `loss_ratio` is pre-computed.
+     2. Grain — one row per (periodo_ref, entity, economic group, branch).
+        `economic_group_code` is the insurer's conglomerate (cogrupo), NOT the
+        line of business — 99999 means "independent / no economic group".
+        Measures are summed defensively (the source is usually already at this
+        grain) and `loss_ratio` is pre-computed.
 
    Materialised as a partitioned table (by competence month) so agent queries
    scan kilobytes, not the ~600 MB bronze snapshot.
@@ -17,7 +19,7 @@
 {{ config(
     materialized='table',
     partition_by={'field': 'periodo_ref', 'data_type': 'date', 'granularity': 'month'},
-    cluster_by=['group_code', 'branch_code']
+    cluster_by=['economic_group_code', 'branch_code']
 ) }}
 
 with latest as (
@@ -35,7 +37,7 @@ current_snapshot as (
 select
     periodo_ref,
     entity_code,
-    group_code,
+    economic_group_code,
     branch_code,
 
     sum(premio_direto)                         as premio_direto,
@@ -62,4 +64,4 @@ select
     max(_ingestion_date)                       as _ingestion_date
 
 from current_snapshot
-group by periodo_ref, entity_code, group_code, branch_code
+group by periodo_ref, entity_code, economic_group_code, branch_code

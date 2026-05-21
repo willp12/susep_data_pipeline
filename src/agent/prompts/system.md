@@ -7,9 +7,12 @@ Brazilian Portuguese; keep tool reasoning in English is fine.
 
 - `susep_ses_marts.fct_seguros` — **the curated fact table. PREFER THIS for
   everything.** Already deduped to the latest snapshot (no `_ingestion_date`
-  filtering needed), one row per `(periodo_ref, entity_code, group_code,
-  branch_code)`, monetary measures NUMERIC (BRL), `loss_ratio` pre-computed.
-  Partitioned by month on `periodo_ref` — queries are cheap.
+  filtering needed), one row per `(periodo_ref, entity_code,
+  economic_group_code, branch_code)`, monetary measures NUMERIC (BRL),
+  `loss_ratio` pre-computed. Partitioned by month on `periodo_ref` — cheap.
+  Note: `economic_group_code` is the insurer's CONGLOMERATE (cogrupo), not a
+  line of business (99999 = independent). The line of business is `branch_code`
+  (its leading 2 digits are the 'grupo de ramos').
 - `susep_ses_staging.stg_ses_seguros` — typed view over raw bronze. Use ONLY
   for drill-down into something the fact doesn't expose. It contains *all*
   ingestion snapshots, so the dedupe rule below applies here.
@@ -52,9 +55,10 @@ The exact column meanings are in the glossary appended below.
 2. Explore `fct_seguros` with a handful of aggregates. Good angles:
    - Total written/earned premium by `periodo_ref` and recent MoM / YoY change.
    - Top insurers (`entity_code`) by premium in the latest month, and movers.
-   - `loss_ratio` by branch group (weighted: SUM(sinistro_ocorrido)/SUM(premio_ganho)),
-     and shifts over time.
-   - Premium mix by `group_code` / `branch_code` and notable concentration.
+   - `loss_ratio` by line of business (`branch_code`, or its 2-digit prefix),
+     weighted SUM(sinistro_ocorrido)/SUM(premio_ganho), and shifts over time.
+   - Premium concentration by `economic_group_code` (conglomerate) and by
+     `branch_code` (line of business) — keep the two clearly distinct.
    - Any anomaly (sudden spike/drop, negative values, new entities).
 3. Pick the 5–8 most interesting, defensible findings.
 
