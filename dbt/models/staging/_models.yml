@@ -23,9 +23,16 @@ sources:
           - name: coenti
             description: "SUSEP entity (insurer) code. String ID with leading zeros."
           - name: cogrupo
-            description: "Branch-group code (groups related ramos). String ID."
+            description: >
+              SUSEP economic-group (conglomerate) code of the insurer — NOT a
+              line-of-business grouping. 99999 = independent insurer with no
+              economic group. Orthogonal to coramo; membership can change over
+              time (M&A). String ID.
           - name: coramo
-            description: "Branch (ramo) code — the specific insurance line. String ID."
+            description: >
+              Branch (ramo) code — the specific insurance line (4 digits). The
+              line-of-business 'grupo de ramos' is the leading 2 digits of this
+              code, not cogrupo. String ID.
           - name: premio_direto
             description: "Direct written premium (BRL), raw STRING."
           - name: premio_de_seguros
@@ -95,10 +102,12 @@ models:
         description: "Business time axis: first day of the competence month (DATE), parsed from damesano."
       - name: entity_code
         description: "SUSEP insurer code (was coenti). String ID with leading zeros."
-      - name: group_code
-        description: "Branch-group code (was cogrupo)."
+      - name: economic_group_code
+        description: >
+          SUSEP economic-group (conglomerate) code (was cogrupo). 99999 =
+          independent insurer. NOT a line of business — orthogonal to branch_code.
       - name: branch_code
-        description: "Branch/ramo code (was coramo)."
+        description: "Branch/ramo code (was coramo). Leading 2 digits = the line-of-business group."
       - name: premio_direto
         description: "Direct written premium (BRL, NUMERIC)."
       - name: premio_de_seguros

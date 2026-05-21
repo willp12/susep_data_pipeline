@@ -6,18 +6,24 @@ models:
       Curated fact table of SUSEP SES insurance figures — the insights agent's
       preferred source. Already deduped to the latest ingestion snapshot, so no
       _ingestion_date filtering is needed. Grain: one row per (periodo_ref,
-      entity_code, group_code, branch_code). Monetary measures are NUMERIC (BRL),
-      summed at the grain; loss_ratio is pre-computed. Partitioned by month on
-      periodo_ref, clustered by group_code/branch_code — cheap to query.
+      entity_code, economic_group_code, branch_code). Monetary measures are
+      NUMERIC (BRL), summed at the grain; loss_ratio is pre-computed. Partitioned
+      by month on periodo_ref, clustered by economic_group_code/branch_code.
     columns:
       - name: periodo_ref
         description: "Competence month (DATE, first day). Business time axis for trends/MoM/YoY."
       - name: entity_code
         description: "SUSEP insurer code. String ID with leading zeros."
-      - name: group_code
-        description: "Branch-group code (groups related ramos)."
+      - name: economic_group_code
+        description: >
+          SUSEP economic-group (conglomerate) code of the insurer. 99999 =
+          independent insurer with no economic group. NOT a line of business —
+          orthogonal to branch_code. Membership can change over time (M&A).
       - name: branch_code
-        description: "Branch/ramo code — the specific insurance line."
+        description: >
+          Branch/ramo code — the specific insurance line (4 digits). The
+          line-of-business 'grupo de ramos' is the leading 2 digits, not
+          economic_group_code.
       - name: premio_direto
         description: "Direct written premium (BRL)."
       - name: premio_de_seguros
