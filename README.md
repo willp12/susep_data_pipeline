@@ -98,6 +98,10 @@ Actions e abre um PR contra a `main` pra revisão humana.
 - **Fonte preferida:** `susep_ses_marts.fct_seguros` — fato curado (dedup do
   snapshot mais recente embutido, métricas pré-computadas como `loss_ratio`,
   particionado por mês). O agente pode descer pro staging/bronze pra drill-down.
+- **Nomes determinísticos:** a fct traz `branch_name`, `ramo_group_name`,
+  `entity_name` e `economic_group_name` (joins das `dim_*`), pra o agente não
+  inferir rótulos. As dims vêm das tabelas de domínio do SES, carregadas por
+  `uv run python -m src.bronze.unzip_dims <zip>` (Fase 2).
 - **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (com dry-run
   obrigatório + cap de ~1 GiB por query) e `read_report`.
 - **Glossário:** as descrições de coluna vêm do `dbt docs` (manifest gerado por
@@ -176,7 +180,8 @@ susep-ses-pipeline/
 ## Fora de escopo neste MVP
 
 - Terraform (Fase 6)
-- Demais CSVs do zip (Fase 2)
+- Demais CSVs de dados do zip (as tabelas de domínio/lookup já são ingeridas; os
+  outros CSVs de fato — resseguros, cap, prev, etc. — seguem fora de escopo)
 - Camadas silver/gold no dbt (Fase 3)
 - Separação dev vs prod (Fase 3)
 - Slack alerts (Fase 5)

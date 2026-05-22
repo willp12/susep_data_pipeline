@@ -90,6 +90,16 @@ sources:
           - name: run_timestamp
             description: "UTC timestamp of the run."
 
+      # Dimension/lookup tables loaded by src/bronze/unzip_dims.py (Phase 2).
+      - name: ses_ramos
+        description: "Lookup: ramo (line-of-business) code → name. coramo;noramo."
+      - name: ses_gruposramos
+        description: "Lookup: branch-group (grupo de ramos) code → name. GRACODIGO is the 2-digit code, GRANOME the name."
+      - name: ses_cias
+        description: "Lookup: insurer code → name (Coenti;Noenti). Cogrupo/Nogrupo columns are empty in the source."
+      - name: ses_grupos_economicos
+        description: "Time-varying map damesano;coenti;noenti;cogrupo;nogrupo — economic-group membership and names per month."
+
 models:
   - name: stg_ses_seguros
     description: >

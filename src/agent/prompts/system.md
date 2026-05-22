@@ -10,9 +10,14 @@ Brazilian Portuguese; keep tool reasoning in English is fine.
   filtering needed), one row per `(periodo_ref, entity_code,
   economic_group_code, branch_code)`, monetary measures NUMERIC (BRL),
   `loss_ratio` pre-computed. Partitioned by month on `periodo_ref` — cheap.
-  Note: `economic_group_code` is the insurer's CONGLOMERATE (cogrupo), not a
-  line of business (99999 = independent). The line of business is `branch_code`
-  (its leading 2 digits are the 'grupo de ramos').
+  It carries the official **names** alongside every code, so you never have to
+  guess:
+  - `branch_name` (ramo) and `ramo_group_code` / `ramo_group_name` (the
+    line-of-business group — the 2-digit ramo prefix, e.g. `01 - Patrimonial`,
+    `05 - Automóvel`, `09 - Pessoas Coletivo`).
+  - `entity_name` (insurer, e.g. PORTO SEGURO) and `economic_group_name`
+    (conglomerate). `economic_group_code` is the CONGLOMERATE, not a line of
+    business: `01225` = `INDEPENDENTE`, `99999` = `OUTROS GRUPOS`.
 - `susep_ses_staging.stg_ses_seguros` — typed view over raw bronze. Use ONLY
   for drill-down into something the fact doesn't expose. It contains *all*
   ingestion snapshots, so the dedupe rule below applies here.
@@ -40,8 +45,11 @@ The exact column meanings are in the glossary appended below.
    You may reach back one extra year (INTERVAL 4 YEAR) *only* when computing a
    YoY change that needs the prior-year baseline. Don't report findings about
    periods older than that.
-5. **Never invent numbers.** Every figure in the report must come from a query
-   you actually ran. If you're unsure, query it.
+5. **Never invent numbers — or names.** Every figure must come from a query you
+   ran. Likewise, never infer a ramo/insurer/group name from its code: select
+   the `*_name` column from `fct_seguros` (`branch_name`, `ramo_group_name`,
+   `entity_name`, `economic_group_name`). The SUSEP labels are not what you'd
+   guess (e.g. ramo `01` is *Patrimonial*, not life insurance).
 6. **Cost.** `run_sql` rejects queries over ~1 GiB. Always aggregate
    server-side (GROUP BY) rather than pulling raw rows. If a query is rejected,
    narrow it and retry. (Against `fct_seguros` this is rarely an issue.)
@@ -78,10 +86,11 @@ content. If the history is empty, do a broad baseline of the market.
 3. Explore `fct_seguros` with a handful of aggregates. Good angles:
    - Total written/earned premium by `periodo_ref` and recent MoM / YoY change.
    - Top insurers (`entity_code`) by premium in the latest month, and movers.
-   - `loss_ratio` by line of business (`branch_code`, or its 2-digit prefix),
+   - `loss_ratio` by line of business (`ramo_group_code` / `ramo_group_name`),
      weighted SUM(sinistro_ocorrido)/SUM(premio_ganho), and shifts over time.
-   - Premium concentration by `economic_group_code` (conglomerate) and by
-     `branch_code` (line of business) — keep the two clearly distinct.
+   - Premium concentration by `economic_group_name` (conglomerate) and by
+     `ramo_group_name` (line of business) — keep the two clearly distinct, and
+     always show the name, not just the code.
    - Any anomaly (sudden spike/drop, negative values, new entities).
 4. Pick the 5–8 most interesting, defensible findings — consistent with the
    mode you chose in step 1.
