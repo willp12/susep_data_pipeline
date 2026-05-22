@@ -62,3 +62,50 @@ models:
         description: "Pre-computed sinistro_ocorrido / premio_ganho (NULL when earned premium is 0)."
       - name: _ingestion_date
         description: "Ingestion date of the snapshot this fact was built from (lineage only — already deduped)."
+      - name: ramo_group_code
+        description: "Line-of-business group code = leading 2 digits of branch_code."
+      - name: branch_name
+        description: "Ramo (line of business) name, from dim_ramo. NULL if the code isn't in the lookup."
+      - name: ramo_group_name
+        description: "Line-of-business group name (e.g. '01 - Patrimonial'), from dim_grupo_ramo."
+      - name: entity_name
+        description: "Insurer name, from dim_entidade."
+      - name: economic_group_name
+        description: >
+          Economic-group (conglomerate) name, from dim_grupo_economico. Note
+          01225 = 'INDEPENDENTE' (independent insurers) and 99999 = 'OUTROS
+          GRUPOS' — use this name, don't infer from the code.
+
+  - name: dim_ramo
+    description: "Ramo (line of business) code → name. Static lookup."
+    columns:
+      - name: branch_code
+        description: "Ramo code (4 digits). Joins fct_seguros.branch_code."
+      - name: branch_name
+        description: "Official ramo name from SUSEP (Ses_ramos)."
+
+  - name: dim_grupo_ramo
+    description: "Branch-group (grupo de ramos) code → name. The code is the 2-digit ramo prefix."
+    columns:
+      - name: ramo_group_code
+        description: "2-digit line-of-business group code. Joins LEFT(branch_code, 2)."
+      - name: ramo_group_name
+        description: "Group name, e.g. '01 - Patrimonial' (Ses_gruposramos)."
+
+  - name: dim_entidade
+    description: "Insurer (entity) code → name. Static lookup."
+    columns:
+      - name: entity_code
+        description: "SUSEP insurer code. Joins fct_seguros.entity_code."
+      - name: entity_name
+        description: "Insurer name (Ses_cias)."
+
+  - name: dim_grupo_economico
+    description: >
+      Economic-group code → most recent name (the source varies over time;
+      we keep the latest name per code). 01225 = INDEPENDENTE, 99999 = OUTROS GRUPOS.
+    columns:
+      - name: economic_group_code
+        description: "Conglomerate code. Joins fct_seguros.economic_group_code."
+      - name: economic_group_name
+        description: "Most recent economic-group name (Ses_grupos_economicos)."
