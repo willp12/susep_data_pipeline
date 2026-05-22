@@ -6,6 +6,7 @@ def test_allowed_tools_are_fully_qualified() -> None:
         f"mcp__{SERVER_NAME}__describe_table",
         f"mcp__{SERVER_NAME}__sample_rows",
         f"mcp__{SERVER_NAME}__run_sql",
+        f"mcp__{SERVER_NAME}__read_report",
     ]
 
 
