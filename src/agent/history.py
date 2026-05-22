@@ -15,13 +15,13 @@ report PRs aren't visible yet.
 from __future__ import annotations
 
 import re
-from datetime import date
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _REPORTS_DIR = _REPO_ROOT / "reports"
 
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Matches YYYY-MM-DD and same-day reruns YYYY-MM-DD_2, _3, …
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:_\d+)?$")
 _HEADER_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
 _NO_HISTORY = "(Nenhum report anterior — este é o primeiro. Faça um baseline amplo do mercado.)"
@@ -39,18 +39,19 @@ def _report_files(reports_dir: Path) -> list[Path]:
 def build_history_digest(
     *,
     reports_dir: Path | None = None,
-    exclude: date | None = None,
     max_reports: int = 21,
 ) -> str:
-    """Build a compact markdown digest of recent reports' insight titles."""
+    """Build a compact markdown digest of recent reports' insight titles.
+
+    Includes same-day reports: the report being generated now isn't written
+    until the run finishes, so earlier reports from today legitimately show up
+    here and feed the next run's continuity.
+    """
     target_dir = reports_dir or _REPORTS_DIR
     if not target_dir.exists():
         return _NO_HISTORY
 
-    files = _report_files(target_dir)
-    if exclude is not None:
-        files = [p for p in files if p.stem != exclude.isoformat()]
-    files = files[:max_reports]
+    files = _report_files(target_dir)[:max_reports]
 
     blocks: list[str] = []
     for path in files:
