@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ from claude_agent_sdk import (
 )
 
 from src.agent.glossary import build_glossary
+from src.agent.history import build_history_digest
 from src.agent.report import extract_body, render_report, write_report
 from src.agent.sdk_tools import ALLOWED_TOOLS, SERVER_NAME, build_bq_server
 from src.config import get_settings
@@ -65,10 +66,15 @@ async def _prompt_stream() -> AsyncIterator[dict[str, Any]]:
     }
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(report_date: date) -> str:
     base = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     glossary = build_glossary()
-    return f"{base}\n\n## Glossário (dbt docs)\n\n{glossary}\n"
+    history = build_history_digest(exclude=report_date)
+    return (
+        f"{base}\n\n"
+        f"## Glossário (dbt docs)\n\n{glossary}\n\n"
+        f"## Histórico de reports (o que já foi coberto)\n\n{history}\n"
+    )
 
 
 async def _tool_gate(
@@ -92,9 +98,11 @@ async def run_agent() -> dict[str, Any]:
     if not settings.gcp_project_id:
         raise RuntimeError("GCP_PROJECT_ID not set — populate .env.")
 
+    report_date = datetime.now(UTC).date()
+
     options = ClaudeAgentOptions(
         model=settings.agent_model,
-        system_prompt=_build_system_prompt(),
+        system_prompt=_build_system_prompt(report_date),
         mcp_servers={SERVER_NAME: build_bq_server()},
         allowed_tools=ALLOWED_TOOLS,
         can_use_tool=_tool_gate,
@@ -131,7 +139,6 @@ async def run_agent() -> dict[str, Any]:
             )
 
     body = extract_body("\n".join(text_parts))
-    report_date = datetime.now(UTC).date()
     rendered = render_report(
         report_date=report_date,
         model=model_used,

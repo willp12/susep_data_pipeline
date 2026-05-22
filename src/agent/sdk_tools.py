@@ -13,6 +13,7 @@ from typing import Annotated, Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
+from src.agent.history import read_report
 from src.agent.tools import describe_table, run_sql, sample_rows
 from src.agent.tools.bq_query import QueryTooExpensiveError
 
@@ -76,7 +77,21 @@ async def run_sql_tool(args: dict[str, Any]) -> dict[str, Any]:
         return _error(f"run_sql failed: {exc}")
 
 
-_TOOLS = [describe_table_tool, sample_rows_tool, run_sql_tool]
+@tool(
+    "read_report",
+    "Read the full markdown of a previous daily report by date (YYYY-MM-DD). "
+    "Use it to deep-dive a thread the history digest mentions — it returns the "
+    "prior numbers and the SQL behind them.",
+    {"date": Annotated[str, "Report date, YYYY-MM-DD"]},
+)
+async def read_report_tool(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return _ok({"date": args["date"], "markdown": read_report(args["date"])})
+    except Exception as exc:
+        return _error(f"read_report failed: {exc}")
+
+
+_TOOLS = [describe_table_tool, sample_rows_tool, run_sql_tool, read_report_tool]
 
 ALLOWED_TOOLS = [f"mcp__{SERVER_NAME}__{t.name}" for t in _TOOLS]
 
