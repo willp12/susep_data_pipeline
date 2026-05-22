@@ -33,7 +33,7 @@ class Settings(BaseModel):
     anthropic_api_key: str = Field(default="")
     agent_model: str = Field(default="sonnet")
     agent_max_turns: int = Field(default=20)
-    agent_max_budget_usd: float = Field(default=0.50)
+    agent_max_budget_usd: float = Field(default=0.75)
 
 
 @lru_cache(maxsize=1)
@@ -65,5 +65,5 @@ def get_settings() -> Settings:
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         agent_model=os.getenv("AGENT_MODEL", "sonnet"),
         agent_max_turns=int(os.getenv("AGENT_MAX_TURNS", "20")),
-        agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.50")),
+        agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.75")),
     )
