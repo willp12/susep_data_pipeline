@@ -68,9 +68,21 @@ def write_report(
     *,
     reports_dir: Path | None = None,
 ) -> Path:
-    """Write the rendered report to `reports/YYYY-MM-DD.md` and return its path."""
+    """Write the report without overwriting.
+
+    The first report of a day is `reports/YYYY-MM-DD.md`; later same-day runs
+    (e.g. manual workflow_dispatch) get a numeric suffix — `YYYY-MM-DD_2.md`,
+    `_3.md`, … — so no previous report is ever clobbered.
+    """
     target_dir = reports_dir or _REPORTS_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / f"{report_date.isoformat()}.md"
+
+    base = report_date.isoformat()
+    path = target_dir / f"{base}.md"
+    suffix = 2
+    while path.exists():
+        path = target_dir / f"{base}_{suffix}.md"
+        suffix += 1
+
     path.write_text(text, encoding="utf-8")
     return path

@@ -1,4 +1,3 @@
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -46,11 +45,15 @@ def test_digest_lists_dates_and_titles_recent_first(tmp_path: Path) -> None:
     assert "- 1. Concentração de mercado" in out
 
 
-def test_digest_excludes_given_date(tmp_path: Path) -> None:
+def test_digest_includes_same_day_reruns(tmp_path: Path) -> None:
     _seed(tmp_path)
-    out = build_history_digest(reports_dir=tmp_path, exclude=date(2026, 5, 21))
-    assert "2026-05-21" not in out
-    assert "2026-05-20" in out
+    (tmp_path / "2026-05-21_2.md").write_text(
+        "### 1. Deep-dive na concentração\ntexto\n", encoding="utf-8"
+    )
+    out = build_history_digest(reports_dir=tmp_path)
+    # Suffixed same-day rerun is matched and listed.
+    assert "2026-05-21_2" in out
+    assert "- 1. Deep-dive na concentração" in out
 
 
 def test_digest_respects_max_reports(tmp_path: Path) -> None:

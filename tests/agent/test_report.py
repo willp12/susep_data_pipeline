@@ -52,3 +52,16 @@ def test_write_report_writes_dated_file(tmp_path: Path) -> None:
     path = write_report("hello", date(2026, 5, 20), reports_dir=tmp_path)
     assert path == tmp_path / "2026-05-20.md"
     assert path.read_text(encoding="utf-8") == "hello"
+
+
+def test_write_report_never_overwrites_same_day(tmp_path: Path) -> None:
+    p1 = write_report("first", date(2026, 5, 20), reports_dir=tmp_path)
+    p2 = write_report("second", date(2026, 5, 20), reports_dir=tmp_path)
+    p3 = write_report("third", date(2026, 5, 20), reports_dir=tmp_path)
+
+    assert p1 == tmp_path / "2026-05-20.md"
+    assert p2 == tmp_path / "2026-05-20_2.md"
+    assert p3 == tmp_path / "2026-05-20_3.md"
+    # The original is preserved untouched.
+    assert p1.read_text(encoding="utf-8") == "first"
+    assert p2.read_text(encoding="utf-8") == "second"

@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,10 +66,10 @@ async def _prompt_stream() -> AsyncIterator[dict[str, Any]]:
     }
 
 
-def _build_system_prompt(report_date: date) -> str:
+def _build_system_prompt() -> str:
     base = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     glossary = build_glossary()
-    history = build_history_digest(exclude=report_date)
+    history = build_history_digest()
     return (
         f"{base}\n\n"
         f"## Glossário (dbt docs)\n\n{glossary}\n\n"
@@ -102,7 +102,7 @@ async def run_agent() -> dict[str, Any]:
 
     options = ClaudeAgentOptions(
         model=settings.agent_model,
-        system_prompt=_build_system_prompt(report_date),
+        system_prompt=_build_system_prompt(),
         mcp_servers={SERVER_NAME: build_bq_server()},
         allowed_tools=ALLOWED_TOOLS,
         can_use_tool=_tool_gate,

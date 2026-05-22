@@ -135,7 +135,10 @@ uv run python -m src.agent.main                          # escreve reports/<hoje
 
 - **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP
   via Workload Identity Federation (SA `bq-agent-readonly`, só leitura), roda o
-  agente e abre o PR com o report.
+  agente e abre um PR com o report. Cada disparo gera um report **novo** sem
+  apagar o anterior: o 1º do dia é `YYYY-MM-DD.md`, reruns viram
+  `YYYY-MM-DD_2.md`, `_3.md`… (uma PR por report). Runs sobrepostos são
+  permitidos (sem `cancel-in-progress`).
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
 - **Secrets/vars necessários:** secret `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
   `GCP_AGENT_SA`; variável `GCP_PROJECT_ID`.
