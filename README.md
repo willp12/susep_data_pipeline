@@ -68,8 +68,8 @@ configuração viva pro estado desejado em vez de recriar recursos:
 | ------------------------- | ---------------------------------------------------------------------- |
 | `00_preflight.sh`         | Valida AWS/GCP creds, `.env`, CLIs, e pede confirmação interativa.     |
 | `01_aws_s3.sh`            | Cria bucket `susep-ses-data` (ou converge config se já existir): block public access, versioning, SSE-S3, lifecycle (raw → Glacier IR após 30d; expira noncurrent versions), tags. |
-| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com` e `storage.googleapis.com`.         |
-| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze` e `susep_ses_staging` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. **Nunca faz DELETE/DROP.** |
+| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com` (necessária pra impersonação via WIF na CI). |
+| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. **Nunca faz DELETE/DROP.** |
 | `run_all.sh`              | Roda `00 → 01 → 02 → 03`, para no primeiro erro.                        |
 
 Para rodar não-interativamente (pular o prompt de confirmação do preflight),
@@ -87,6 +87,59 @@ setar `BOOTSTRAP_ASSUME_YES=1`.
 | `make dbt-build`  | Roda `dbt build` no projeto `dbt/`                         |
 | `make bootstrap`  | Executa scripts de provisionamento de infra                |
 
+## Agente de insights
+
+Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e escreve um relatório
+de insights de negócio em `reports/YYYY-MM-DD.md`. Roda diariamente via GitHub
+Actions e abre um PR contra a `main` pra revisão humana.
+
+### Como funciona
+
+- **Fonte preferida:** `susep_ses_marts.fct_seguros` — fato curado (dedup do
+  snapshot mais recente embutido, métricas pré-computadas como `loss_ratio`,
+  particionado por mês). O agente pode descer pro staging/bronze pra drill-down.
+- **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (com dry-run
+  obrigatório + cap de ~1 GiB por query) e `read_report`.
+- **Glossário:** as descrições de coluna vêm do `dbt docs` (manifest gerado por
+  `dbt parse`), a partir dos `_models.yml`. Refine-os pra melhorar os insights.
+- **Janela:** foca nos últimos 3 anos de `periodo_ref`.
+- **Guardrails:** gate default-deny (só as tools acima), `max_turns` e
+  `max_budget_usd` (config), além do cap de bytes por query.
+
+### Memória entre runs (continuidade)
+
+Cada run recebe um **digest** dos reports anteriores (datas + títulos dos
+insights) injetado no prompt, e pode puxar um report inteiro via `read_report`.
+A cada execução o agente escolhe um **modo** (declarado no sumário):
+
+- **deep-dive** — aprofunda um fio de um report anterior, ou
+- **novo ângulo** — investiga algo ainda não coberto.
+
+Repetir um achado com o mesmo enquadramento é proibido; só vale reabordar uma
+métrica se houver informação nova (novo mês, recorte, causa).
+
+> **Importante:** o histórico considerado é o que está **mergeado na `main`**.
+> Como os reports entram via PR, um PR ainda aberto não entra na memória do run
+> seguinte — se acumular PRs sem mergear, a continuidade "atrasa".
+
+### Rodar localmente
+
+```bash
+# Pré-requisitos: ANTHROPIC_API_KEY no .env e a CLI do Claude Code instalada
+npm install -g @anthropic-ai/claude-code
+uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
+uv run python -m src.agent.main                          # escreve reports/<hoje>.md
+```
+
+### Em produção (GitHub Actions)
+
+- **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP
+  via Workload Identity Federation (SA `bq-agent-readonly`, só leitura), roda o
+  agente e abre o PR com o report.
+- **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
+- **Secrets/vars necessários:** secret `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
+  `GCP_AGENT_SA`; variável `GCP_PROJECT_ID`.
+
 ### Git workflow
 
 - `main` é protegida: toda mudança entra via PR.
@@ -98,24 +151,27 @@ setar `BOOTSTRAP_ASSUME_YES=1`.
 
 ```
 susep-ses-pipeline/
-├── .github/workflows/            # CI (Fase 4)
+├── .github/workflows/            # insights.yml (agente) + ci.yml (lint/test/secret-scan)
 ├── scripts/bootstrap/            # provisionamento (vira Terraform na Fase 6)
 ├── src/
-│   ├── main.py                   # entrypoint
+│   ├── main.py                   # entrypoint da pipeline
 │   ├── config.py                 # carrega env vars
 │   ├── ingestion/                # scraper, hasher, downloader
 │   ├── bronze/                   # unzip → parquet
 │   ├── loaders/                  # S3 → BigQuery
-│   └── state/                    # ingestion_log
+│   ├── state/                    # ingestion_log
+│   └── agent/                    # agente de insights (tools, glossário, histórico, prompt)
 ├── dbt/
-│   └── models/staging/
+│   └── models/
+│       ├── staging/              # stg_ses_seguros (view)
+│       └── marts/                # fct_seguros (fato curado lido pelo agente)
+├── reports/                      # relatórios gerados pelo agente (YYYY-MM-DD.md)
 ├── tests/
 └── pyproject.toml
 ```
 
 ## Fora de escopo neste MVP
 
-- GitHub Actions / cron agendado (Fase 4)
 - Terraform (Fase 6)
 - Demais CSVs do zip (Fase 2)
 - Camadas silver/gold no dbt (Fase 3)
