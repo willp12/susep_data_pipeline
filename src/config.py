@@ -25,6 +25,8 @@ class Settings(BaseModel):
     gcp_bq_dataset_bronze: str = Field(default="susep_ses_bronze")
     gcp_bq_dataset_staging: str = Field(default="susep_ses_staging")
     gcp_bq_dataset_marts: str = Field(default="susep_ses_marts")
+    # Empty when GCP_PROJECT_ID is also empty; derived in get_settings otherwise.
+    gcp_reports_bucket: str = Field(default="")
     susep_ses_url: str = Field(
         default="https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
     )
@@ -50,6 +52,9 @@ def get_settings() -> Settings:
                 del os.environ[key]
         load_dotenv(_ENV_FILE, override=False)
 
+    project_id = os.getenv("GCP_PROJECT_ID", "")
+    default_reports_bucket = f"{project_id}-susep-ses-reports" if project_id else ""
+
     return Settings(
         env=os.getenv("ENV", "dev"),
         aws_s3_bucket=os.getenv("AWS_S3_BUCKET", "susep-ses-data"),
@@ -58,6 +63,7 @@ def get_settings() -> Settings:
         gcp_bq_dataset_bronze=os.getenv("GCP_BQ_DATASET_BRONZE", "susep_ses_bronze"),
         gcp_bq_dataset_staging=os.getenv("GCP_BQ_DATASET_STAGING", "susep_ses_staging"),
         gcp_bq_dataset_marts=os.getenv("GCP_BQ_DATASET_MARTS", "susep_ses_marts"),
+        gcp_reports_bucket=os.getenv("GCP_REPORTS_BUCKET") or default_reports_bucket,
         susep_ses_url=os.getenv(
             "SUSEP_SES_URL",
             "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx",
