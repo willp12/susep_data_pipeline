@@ -1,90 +1,95 @@
-from pathlib import Path
-
 import pytest
 
 from src.agent.history import build_history_digest, read_report
-
-_REPORT_A = """---
-date: 2026-05-20
----
-# Insights SUSEP SES — 2026-05-20
-## Insights
-### 1. Auto loss ratio elevado
-texto
-### 2. Saúde melhora
-texto
-"""
-
-_REPORT_B = """---
-date: 2026-05-21
----
-### 1. Concentração de mercado
-texto
-"""
+from tests.agent._fakes import FakeStore
 
 
-def _seed(tmp_path: Path) -> Path:
-    (tmp_path / "2026-05-20.md").write_text(_REPORT_A, encoding="utf-8")
-    (tmp_path / "2026-05-21.md").write_text(_REPORT_B, encoding="utf-8")
-    (tmp_path / ".gitkeep").write_text("", encoding="utf-8")
-    return tmp_path
+def _seed(store: FakeStore) -> None:
+    store.save_manifest(
+        {
+            "reports": [
+                {
+                    "stem": "2026-05-20",
+                    "report_path": "reports/2026/2026-05-20.md",
+                    "queries_path": None,
+                    "titles": ["1. Auto loss ratio elevado", "2. Saúde melhora"],
+                },
+                {
+                    "stem": "2026-05-21",
+                    "report_path": "reports/2026/2026-05-21.md",
+                    "queries_path": "queries/2026/2026-05-21.sql.md",
+                    "titles": ["1. Concentração de mercado"],
+                },
+            ]
+        }
+    )
+    store.objects["reports/2026/2026-05-20.md"] = "# Report antigo\nSQL inline aqui\n"
+    store.objects["reports/2026/2026-05-21.md"] = "# Report novo\nsó análise\n"
+    store.objects["queries/2026/2026-05-21.sql.md"] = "## Query 1\nSELECT 1"
 
 
-def test_digest_fallback_when_empty(tmp_path: Path) -> None:
-    out = build_history_digest(reports_dir=tmp_path)
+def test_digest_fallback_when_empty() -> None:
+    out = build_history_digest(store=FakeStore())
     assert "primeiro" in out.lower()
 
 
-def test_digest_lists_dates_and_titles_recent_first(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    out = build_history_digest(reports_dir=tmp_path)
-    # Most recent date appears before the older one.
+def test_digest_lists_dates_and_titles_recent_first() -> None:
+    store = FakeStore()
+    _seed(store)
+    out = build_history_digest(store=store)
     assert out.index("2026-05-21") < out.index("2026-05-20")
     assert "- 1. Auto loss ratio elevado" in out
     assert "- 2. Saúde melhora" in out
     assert "- 1. Concentração de mercado" in out
 
 
-def test_digest_includes_same_day_reruns(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    (tmp_path / "2026-05-21_2.md").write_text(
-        "### 1. Deep-dive na concentração\ntexto\n", encoding="utf-8"
+def test_digest_includes_same_day_reruns() -> None:
+    store = FakeStore()
+    _seed(store)
+    manifest = store.load_manifest()
+    manifest["reports"].append(
+        {
+            "stem": "2026-05-21_2",
+            "report_path": "reports/2026/2026-05-21_2.md",
+            "queries_path": None,
+            "titles": ["1. Deep-dive na concentração"],
+        }
     )
-    out = build_history_digest(reports_dir=tmp_path)
-    # Suffixed same-day rerun is matched and listed.
+    store.save_manifest(manifest)
+
+    out = build_history_digest(store=store)
     assert "2026-05-21_2" in out
     assert "- 1. Deep-dive na concentração" in out
 
 
-def test_digest_respects_max_reports(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    out = build_history_digest(reports_dir=tmp_path, max_reports=1)
-    # Only the most recent report is included.
+def test_digest_respects_max_reports() -> None:
+    store = FakeStore()
+    _seed(store)
+    out = build_history_digest(store=store, max_reports=1)
     assert "2026-05-21" in out
     assert "2026-05-20" not in out
 
 
-def test_read_report_returns_full_text(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    assert read_report("2026-05-20", reports_dir=tmp_path) == _REPORT_A
+def test_read_report_returns_full_text() -> None:
+    store = FakeStore()
+    _seed(store)
+    out = read_report("2026-05-20", store=store)
+    assert out == "# Report antigo\nSQL inline aqui\n"
 
 
-def test_read_report_appends_queries_appendix_when_present(tmp_path: Path) -> None:
-    _seed(tmp_path)
-    queries_dir = tmp_path / "queries"
-    queries_dir.mkdir()
-    (queries_dir / "2026-05-20.sql.md").write_text("## Query 1\nSELECT 1", encoding="utf-8")
-
-    out = read_report("2026-05-20", reports_dir=tmp_path)
-    assert out.startswith(_REPORT_A)
+def test_read_report_appends_queries_appendix_when_present() -> None:
+    store = FakeStore()
+    _seed(store)
+    out = read_report("2026-05-21", store=store)
+    assert out.startswith("# Report novo")
     assert "## Query 1\nSELECT 1" in out
 
 
-def test_read_report_validates_date_format(tmp_path: Path) -> None:
+def test_read_report_validates_date_format() -> None:
     with pytest.raises(ValueError, match="YYYY-MM-DD"):
-        read_report("20-05-2026", reports_dir=tmp_path)
+        read_report("20-05-2026", store=FakeStore())
 
 
-def test_read_report_missing_file(tmp_path: Path) -> None:
+def test_read_report_missing_report() -> None:
     with pytest.raises(FileNotFoundError):
-        read_report("2026-01-01", reports_dir=tmp_path)
+        read_report("2026-01-01", store=FakeStore())
