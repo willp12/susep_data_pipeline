@@ -220,3 +220,7 @@ toolbox.exe
 # Claude Code machine-local settings + worktrees.
 .claude/settings.local.json
 .claude/worktrees/
+
+# Agent reports: the GCS bucket is the source of truth; local files under
+# reports/ are scratch copies of the current run (see src/agent/publisher.py).
+reports/

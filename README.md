@@ -90,9 +90,10 @@ setar `BOOTSTRAP_ASSUME_YES=1`.
 
 ## Agente de insights
 
-Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e escreve um relatório
-de insights de negócio em `reports/YYYY-MM-DD.md`. Roda diariamente via GitHub
-Actions e abre um PR contra a `main` pra revisão humana.
+Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e gera um relatório
+diário de insights de negócio. Os artefatos vão pro **bucket GCS de reports**
+(análise, apêndice de queries e run log) e o report chega por **e-mail** pra
+revisão humana. Roda diariamente via GitHub Actions; nada é commitado no repo.
 
 ### Como funciona
 
@@ -159,14 +160,17 @@ uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ### Em produção (GitHub Actions)
 
 - **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP
-  via Workload Identity Federation (SA `bq-agent-readonly`, só leitura), roda o
-  agente e abre um PR com o report. Cada disparo gera um report **novo** sem
-  apagar o anterior: o 1º do dia é `YYYY-MM-DD.md`, reruns viram
-  `YYYY-MM-DD_2.md`, `_3.md`… (uma PR por report). Runs sobrepostos são
-  permitidos (sem `cancel-in-progress`).
+  via Workload Identity Federation (SA `bq-agent-readonly`: leitura no BQ +
+  `objectAdmin` no bucket de reports), roda o agente, **publica no GCS** e envia
+  o e-mail. Nada é commitado no repo; as cópias scratch viram artifact do
+  workflow (7 dias) como rede de segurança. Cada disparo gera um report
+  **novo**: o 1º do dia é `YYYY-MM-DD`, reruns ganham sufixo `_2`, `_3`…
+  (reservado no manifest do bucket). Runs sobrepostos são permitidos (sem
+  `cancel-in-progress`).
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
-- **Secrets/vars necessários:** secret `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
-  `GCP_AGENT_SA`; variável `GCP_PROJECT_ID`.
+- **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
+  `GCP_AGENT_SA`, `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`;
+  variável `GCP_PROJECT_ID`.
 
 ### Git workflow
 
@@ -193,7 +197,7 @@ susep-ses-pipeline/
 │   └── models/
 │       ├── staging/              # stg_ses_seguros (view)
 │       └── marts/                # fct_seguros (fato curado lido pelo agente)
-├── reports/                      # relatórios gerados pelo agente (YYYY-MM-DD.md)
+├── reports/                      # scratch local do run (fonte de verdade = bucket GCS)
 ├── tests/
 └── pyproject.toml
 ```
