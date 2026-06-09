@@ -66,11 +66,22 @@ def build_history_digest(
 
 
 def read_report(report_date: str, *, reports_dir: Path | None = None) -> str:
-    """Return the full markdown of a previous report by date (YYYY-MM-DD)."""
+    """Return the full markdown of a previous report by date (YYYY-MM-DD).
+
+    Reports newer than the analysis/SQL split keep their queries in a sibling
+    appendix (``queries/<date>.sql.md``); when present it's appended so a
+    deep-dive still sees the SQL behind the numbers. Older reports carry the
+    SQL inline and have no appendix.
+    """
     if not _DATE_RE.match(report_date):
         raise ValueError(f"report_date must be YYYY-MM-DD, got {report_date!r}")
     target_dir = reports_dir or _REPORTS_DIR
     path = target_dir / f"{report_date}.md"
     if not path.exists():
         raise FileNotFoundError(f"No report found for {report_date}")
-    return path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+
+    queries_path = target_dir / "queries" / f"{report_date}.sql.md"
+    if queries_path.exists():
+        text = f"{text}\n\n---\n\n{queries_path.read_text(encoding='utf-8')}"
+    return text

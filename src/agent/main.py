@@ -30,14 +30,19 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
     ToolPermissionContext,
-    ToolUseBlock,
     query,
 )
 
 from src.agent.glossary import build_glossary
 from src.agent.history import build_history_digest
-from src.agent.report import extract_body, render_report, write_report
-from src.agent.sdk_tools import ALLOWED_TOOLS, SERVER_NAME, build_bq_server
+from src.agent.queries import render_queries_appendix, write_queries_appendix
+from src.agent.report import extract_body, render_report, reserve_report_path
+from src.agent.sdk_tools import (
+    ALLOWED_TOOLS,
+    SERVER_NAME,
+    build_bq_server,
+    get_query_log,
+)
 from src.config import get_settings
 
 log = structlog.get_logger(__name__)
@@ -116,7 +121,6 @@ async def run_agent() -> dict[str, Any]:
     )
 
     text_parts: list[str] = []
-    queries_run = 0
     cost_usd: float | None = None
     model_used = settings.agent_model
 
@@ -127,8 +131,6 @@ async def run_agent() -> dict[str, Any]:
             for block in message.content:
                 if isinstance(block, TextBlock):
                     text_parts.append(block.text)
-                elif isinstance(block, ToolUseBlock) and block.name.endswith("run_sql"):
-                    queries_run += 1
         elif isinstance(message, ResultMessage):
             cost_usd = message.total_cost_usd
             log.info(
@@ -139,19 +141,40 @@ async def run_agent() -> dict[str, Any]:
             )
 
     body = extract_body("\n".join(text_parts))
+
+    # Analysis and SQL are separated: the body carries only the analysis
+    # (citing queries by number) and the appendix is built deterministically
+    # from the run_sql log — never from model output.
+    query_log = get_query_log()
+    path = reserve_report_path(report_date)
+    stem = path.stem
+    queries_file = f"queries/{stem}.sql.md" if query_log else None
+
     rendered = render_report(
         report_date=report_date,
         model=model_used,
         body=body,
-        queries_run=queries_run,
+        queries_run=len(query_log),
         cost_usd=cost_usd,
         ingestion_date_covered=None,
+        queries_file=queries_file,
     )
-    path = write_report(rendered, report_date)
-    log.info("agent.run.report_written", path=str(path), queries_run=queries_run)
+    path.write_text(rendered, encoding="utf-8")
+
+    queries_path: Path | None = None
+    if query_log:
+        queries_path = write_queries_appendix(render_queries_appendix(stem, query_log), stem)
+
+    log.info(
+        "agent.run.report_written",
+        path=str(path),
+        queries_path=str(queries_path) if queries_path else None,
+        queries_run=len(query_log),
+    )
     return {
         "path": str(path),
-        "queries_run": queries_run,
+        "queries_path": str(queries_path) if queries_path else None,
+        "queries_run": len(query_log),
         "cost_usd": cost_usd,
         "model": model_used,
     }
