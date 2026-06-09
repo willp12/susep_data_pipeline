@@ -1,12 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-from src.agent.report import (
-    extract_body,
-    render_report,
-    reserve_report_path,
-    write_report,
-)
+from src.agent.report import extract_body, render_report, write_local_copy
 
 
 def test_extract_body_pulls_marker_block() -> None:
@@ -78,28 +73,15 @@ def test_render_report_queries_file_defaults_to_null() -> None:
     assert "queries_file: null" in out
 
 
-def test_reserve_report_path_skips_existing(tmp_path: Path) -> None:
-    (tmp_path / "2026-06-09.md").write_text("x", encoding="utf-8")
-    path = reserve_report_path(date(2026, 6, 9), reports_dir=tmp_path)
-    assert path == tmp_path / "2026-06-09_2.md"
-    # Reserving doesn't write anything.
-    assert not path.exists()
-
-
-def test_write_report_writes_dated_file(tmp_path: Path) -> None:
-    path = write_report("hello", date(2026, 5, 20), reports_dir=tmp_path)
-    assert path == tmp_path / "2026-05-20.md"
+def test_write_local_copy_writes_stem_file(tmp_path: Path) -> None:
+    path = write_local_copy("hello", "2026-05-20_2", reports_dir=tmp_path)
+    assert path == tmp_path / "2026-05-20_2.md"
     assert path.read_text(encoding="utf-8") == "hello"
 
 
-def test_write_report_never_overwrites_same_day(tmp_path: Path) -> None:
-    p1 = write_report("first", date(2026, 5, 20), reports_dir=tmp_path)
-    p2 = write_report("second", date(2026, 5, 20), reports_dir=tmp_path)
-    p3 = write_report("third", date(2026, 5, 20), reports_dir=tmp_path)
-
-    assert p1 == tmp_path / "2026-05-20.md"
-    assert p2 == tmp_path / "2026-05-20_2.md"
-    assert p3 == tmp_path / "2026-05-20_3.md"
-    # The original is preserved untouched.
-    assert p1.read_text(encoding="utf-8") == "first"
-    assert p2.read_text(encoding="utf-8") == "second"
+def test_write_local_copy_overwrites_stale_scratch(tmp_path: Path) -> None:
+    # Stem uniqueness is the manifest's job (publisher.reserve_stem); locally
+    # an existing file is stale scratch and must be replaced.
+    write_local_copy("old", "2026-05-20", reports_dir=tmp_path)
+    path = write_local_copy("new", "2026-05-20", reports_dir=tmp_path)
+    assert path.read_text(encoding="utf-8") == "new"

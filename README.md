@@ -128,17 +128,23 @@ A cada execução o agente escolhe um **modo** (declarado no sumário):
 Repetir um achado com o mesmo enquadramento é proibido; só vale reabordar uma
 métrica se houver informação nova (novo mês, recorte, causa).
 
-> **Importante:** o histórico considerado é o que está **mergeado na `main`**.
-> Como os reports entram via PR, um PR ainda aberto não entra na memória do run
-> seguinte — se acumular PRs sem mergear, a continuidade "atrasa".
+O histórico vem do **`manifest.json` do bucket GCS** (datas + títulos; 1 GET
+barato por run), e `read_report` baixa o report do bucket — um report publicado
+fica visível pro run seguinte imediatamente, sem esperar merge de PR. Reports
+antigos do repo entram no bucket via backfill one-off:
+
+```bash
+uv run python scripts/backfill_reports_to_gcs.py   # idempotente
+```
 
 ### Rodar localmente
 
 ```bash
-# Pré-requisitos: ANTHROPIC_API_KEY no .env e a CLI do Claude Code instalada
+# Pré-requisitos: ANTHROPIC_API_KEY no .env, CLI do Claude Code instalada e o
+# bucket de reports criado (scripts/bootstrap/04_gcp_gcs_reports.sh)
 npm install -g @anthropic-ai/claude-code
 uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
-uv run python -m src.agent.main                          # escreve reports/<hoje>.md
+uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ```
 
 ### Em produção (GitHub Actions)

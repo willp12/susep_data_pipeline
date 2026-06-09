@@ -1,87 +1,69 @@
 """Report history — gives the agent continuity across runs.
 
-Past reports are committed under ``reports/YYYY-MM-DD.md``. We build a compact
-digest (date + the insight titles of each report) and inject it into the system
-prompt, so the agent knows what's already been covered and can either deep-dive
-a prior thread or pick a genuinely new angle instead of repeating itself.
+Published reports live in the GCS reports bucket (see ``publisher``), not in
+the repo. The always-injected digest is built from ``manifest.json`` alone
+(dates + insight titles — one small GET); the full text of any prior report is
+fetched on demand via the ``read_report`` tool.
 
-Only titles go into the always-injected digest (cheap). The full text of any
-prior report is fetched on demand via the ``read_report`` tool.
-
-History reflects reports merged to the branch the workflow checks out — open
-report PRs aren't visible yet.
+Unlike the old repo-folder history, a published report is visible to the very
+next run — there is no PR-merge lag.
 """
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_REPORTS_DIR = _REPO_ROOT / "reports"
+from src.agent.publisher import ReportStore
 
 # Matches YYYY-MM-DD and same-day reruns YYYY-MM-DD_2, _3, …
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:_\d+)?$")
-_HEADER_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
 _NO_HISTORY = "(Nenhum report anterior — este é o primeiro. Faça um baseline amplo do mercado.)"
 
 
-def _report_files(reports_dir: Path) -> list[Path]:
-    """Return report files (YYYY-MM-DD.md), most recent first."""
-    return sorted(
-        (p for p in reports_dir.glob("*.md") if _DATE_RE.match(p.stem)),
-        key=lambda p: p.stem,
-        reverse=True,
-    )
-
-
 def build_history_digest(
     *,
-    reports_dir: Path | None = None,
+    store: ReportStore | None = None,
     max_reports: int = 21,
 ) -> str:
-    """Build a compact markdown digest of recent reports' insight titles.
-
-    Includes same-day reports: the report being generated now isn't written
-    until the run finishes, so earlier reports from today legitimately show up
-    here and feed the next run's continuity.
-    """
-    target_dir = reports_dir or _REPORTS_DIR
-    if not target_dir.exists():
-        return _NO_HISTORY
-
-    files = _report_files(target_dir)[:max_reports]
+    """Build a compact markdown digest of recent reports' insight titles."""
+    target_store = store or ReportStore()
+    entries = target_store.load_manifest().get("reports", [])
+    entries = sorted(entries, key=lambda e: str(e["stem"]), reverse=True)[:max_reports]
 
     blocks: list[str] = []
-    for path in files:
-        titles = _HEADER_RE.findall(path.read_text(encoding="utf-8"))
+    for entry in entries:
+        titles = entry.get("titles") or []
         if not titles:
             continue
-        lines = [f"### {path.stem}"]
-        lines.extend(f"- {title.strip()}" for title in titles)
+        lines = [f"### {entry['stem']}"]
+        lines.extend(f"- {title}" for title in titles)
         blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks) if blocks else _NO_HISTORY
 
 
-def read_report(report_date: str, *, reports_dir: Path | None = None) -> str:
-    """Return the full markdown of a previous report by date (YYYY-MM-DD).
+def read_report(report_date: str, *, store: ReportStore | None = None) -> str:
+    """Return the full markdown of a previous report by stem (YYYY-MM-DD[_n]).
 
-    Reports newer than the analysis/SQL split keep their queries in a sibling
-    appendix (``queries/<date>.sql.md``); when present it's appended so a
-    deep-dive still sees the SQL behind the numbers. Older reports carry the
-    SQL inline and have no appendix.
+    Reports newer than the analysis/SQL split keep their queries in a separate
+    appendix; when the manifest points to one it's appended, so a deep-dive
+    still sees the SQL behind the numbers. Backfilled (older) reports carry
+    the SQL inline and have no appendix.
     """
     if not _DATE_RE.match(report_date):
         raise ValueError(f"report_date must be YYYY-MM-DD, got {report_date!r}")
-    target_dir = reports_dir or _REPORTS_DIR
-    path = target_dir / f"{report_date}.md"
-    if not path.exists():
-        raise FileNotFoundError(f"No report found for {report_date}")
-    text = path.read_text(encoding="utf-8")
+    target_store = store or ReportStore()
 
-    queries_path = target_dir / "queries" / f"{report_date}.sql.md"
-    if queries_path.exists():
-        text = f"{text}\n\n---\n\n{queries_path.read_text(encoding='utf-8')}"
+    manifest = target_store.load_manifest()
+    entry = next(
+        (e for e in manifest.get("reports", []) if e["stem"] == report_date),
+        None,
+    )
+    if entry is None:
+        raise FileNotFoundError(f"No report found for {report_date}")
+
+    text = target_store.download_text(entry["report_path"])
+    if entry.get("queries_path"):
+        text = f"{text}\n\n---\n\n{target_store.download_text(entry['queries_path'])}"
     return text

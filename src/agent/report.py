@@ -1,8 +1,10 @@
-"""Render and persist the agent's daily report as `reports/YYYY-MM-DD.md`.
+"""Render the agent's daily report and keep a local scratch copy.
 
 The agent returns the report body wrapped in ===REPORT START===/===REPORT END===
-markers. We extract that, prepend a YAML frontmatter block with run metadata
-(model, cost, queries, snapshot date) and write the file.
+markers. We extract that and prepend a YAML frontmatter block with run metadata
+(model, cost, queries, snapshot date). The GCS bucket is the source of truth
+(see ``publisher``); the local copy under `reports/` only salvages the run if
+the upload fails.
 """
 
 from __future__ import annotations
@@ -68,37 +70,20 @@ def render_report(
     return f"{frontmatter}{body}\n"
 
 
-def reserve_report_path(
-    report_date: date,
+def write_local_copy(
+    text: str,
+    stem: str,
     *,
     reports_dir: Path | None = None,
 ) -> Path:
-    """Pick the report path without overwriting an existing one.
+    """Write the local scratch copy as `reports/<stem>.md`.
 
-    The first report of a day is `reports/YYYY-MM-DD.md`; later same-day runs
-    (e.g. manual workflow_dispatch) get a numeric suffix — `YYYY-MM-DD_2.md`,
-    `_3.md`, … — so no previous report is ever clobbered. The path is only
-    chosen here (single-process run, no race); the caller writes to it.
+    The stem's non-clobbering uniqueness is decided against the GCS manifest
+    (``publisher.reserve_stem``) — the local fs is ephemeral in CI, so an
+    existing local file is stale scratch and may be overwritten.
     """
     target_dir = reports_dir or _REPORTS_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
-
-    base = report_date.isoformat()
-    path = target_dir / f"{base}.md"
-    suffix = 2
-    while path.exists():
-        path = target_dir / f"{base}_{suffix}.md"
-        suffix += 1
-    return path
-
-
-def write_report(
-    text: str,
-    report_date: date,
-    *,
-    reports_dir: Path | None = None,
-) -> Path:
-    """Write the report to the next non-clobbering dated path."""
-    path = reserve_report_path(report_date, reports_dir=reports_dir)
+    path = target_dir / f"{stem}.md"
     path.write_text(text, encoding="utf-8")
     return path
