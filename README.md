@@ -157,6 +157,30 @@ uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
 uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ```
 
+### Rodar com modelo local (LM Studio)
+
+O LM Studio (>= 0.4.1) expõe um endpoint **Anthropic-compatible** (`/v1/messages`),
+então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
+
+1. No LM Studio: carregar o modelo com **contexto >= 25k tokens** (o SDK é
+   pesado em contexto) e ligar o servidor local (aba Developer, porta 1234).
+2. No `.env`:
+
+   ```
+   AGENT_PROVIDER=local
+   AGENT_MODEL=google/gemma-3-27b      # id do modelo no LM Studio
+   LMSTUDIO_BASE_URL=http://localhost:1234
+   ```
+
+3. `uv run python -m src.agent.main` — publica no GCS e envia e-mail normalmente
+   (o cap de budget USD não se aplica; `AGENT_MAX_TURNS` continua valendo).
+
+> **Caveat:** o agente depende de *tool calling* confiável (muitas chamadas de
+> `run_sql`). O Gemma é fraco nisso; se ele não emitir tool calls direito,
+> modelos como **Qwen3** (14B / 30B-A3B) têm function calling nativo bem melhor
+> no LM Studio. O caminho Anthropic segue sendo o default do workflow diário —
+> o modo local é manual/experimental.
+
 ### Em produção (GitHub Actions)
 
 - **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP

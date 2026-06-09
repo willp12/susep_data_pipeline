@@ -48,7 +48,7 @@ from src.agent.sdk_tools import (
     build_bq_server,
     get_query_log,
 )
-from src.config import get_settings
+from src.config import Settings, get_settings
 
 log = structlog.get_logger(__name__)
 
@@ -87,6 +87,21 @@ def _build_system_prompt(store: ReportStore) -> str:
     )
 
 
+def _provider_env(settings: Settings) -> dict[str, str]:
+    """Env for the SDK-spawned CLI process, per provider.
+
+    'local' targets LM Studio's Anthropic-compatible /v1/messages endpoint
+    (LM Studio >= 0.4.1): same SDK, different base URL, dummy token. Set
+    AGENT_MODEL to the LM Studio model id (e.g. google/gemma-3-27b).
+    """
+    if settings.agent_provider == "local":
+        return {
+            "ANTHROPIC_BASE_URL": settings.lmstudio_base_url,
+            "ANTHROPIC_AUTH_TOKEN": "lmstudio",
+        }
+    return {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
+
+
 async def _tool_gate(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -103,7 +118,7 @@ async def _tool_gate(
 async def run_agent() -> dict[str, Any]:
     """Drive one agent pass and write the report. Returns run metadata."""
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if settings.agent_provider == "anthropic" and not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set — populate .env (see .env.example).")
     if not settings.gcp_project_id:
         raise RuntimeError("GCP_PROJECT_ID not set — populate .env.")
@@ -119,8 +134,12 @@ async def run_agent() -> dict[str, Any]:
         can_use_tool=_tool_gate,
         permission_mode="default",
         max_turns=settings.agent_max_turns,
-        max_budget_usd=settings.agent_max_budget_usd,
-        env={"ANTHROPIC_API_KEY": settings.anthropic_api_key},
+        # Local runs cost nothing and report no usage — a USD cap would be
+        # meaningless there; max_turns is the guardrail that still applies.
+        max_budget_usd=(
+            settings.agent_max_budget_usd if settings.agent_provider == "anthropic" else None
+        ),
+        env=_provider_env(settings),
         cwd=str(_REPO_ROOT),
         # Don't inherit the repo's CLAUDE.md / settings into the agent run.
         setting_sources=None,
@@ -130,7 +149,11 @@ async def run_agent() -> dict[str, Any]:
     cost_usd: float | None = None
     model_used = settings.agent_model
 
-    log.info("agent.run.start", model=settings.agent_model)
+    log.info(
+        "agent.run.start",
+        model=settings.agent_model,
+        provider=settings.agent_provider,
+    )
     async for message in query(prompt=_prompt_stream(), options=options):
         if isinstance(message, AssistantMessage):
             model_used = message.model or model_used
