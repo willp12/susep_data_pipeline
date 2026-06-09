@@ -1,7 +1,12 @@
 from datetime import date
 from pathlib import Path
 
-from src.agent.report import extract_body, render_report, write_report
+from src.agent.report import (
+    extract_body,
+    render_report,
+    reserve_report_path,
+    write_report,
+)
 
 
 def test_extract_body_pulls_marker_block() -> None:
@@ -46,6 +51,39 @@ def test_render_report_handles_null_cost() -> None:
     )
     assert "cost_usd: null" in out
     assert "ingestion_date_covered: null" in out
+
+
+def test_render_report_references_queries_file() -> None:
+    out = render_report(
+        report_date=date(2026, 6, 9),
+        model="sonnet",
+        body="x",
+        queries_run=3,
+        cost_usd=None,
+        ingestion_date_covered=None,
+        queries_file="queries/2026-06-09.sql.md",
+    )
+    assert "queries_file: queries/2026-06-09.sql.md" in out
+
+
+def test_render_report_queries_file_defaults_to_null() -> None:
+    out = render_report(
+        report_date=date(2026, 6, 9),
+        model="sonnet",
+        body="x",
+        queries_run=0,
+        cost_usd=None,
+        ingestion_date_covered=None,
+    )
+    assert "queries_file: null" in out
+
+
+def test_reserve_report_path_skips_existing(tmp_path: Path) -> None:
+    (tmp_path / "2026-06-09.md").write_text("x", encoding="utf-8")
+    path = reserve_report_path(date(2026, 6, 9), reports_dir=tmp_path)
+    assert path == tmp_path / "2026-06-09_2.md"
+    # Reserving doesn't write anything.
+    assert not path.exists()
 
 
 def test_write_report_writes_dated_file(tmp_path: Path) -> None:

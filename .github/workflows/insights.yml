@@ -80,9 +80,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The agent wrote exactly one new (untracked) report file. Derive the
-          # branch/PR name from it, so same-day reruns never collide.
-          new_file="$(git ls-files --others --exclude-standard -- reports/ | head -n1)"
+          # The agent wrote one new (untracked) report plus its SQL appendix
+          # under reports/queries/. Derive the branch/PR name from the report,
+          # so same-day reruns never collide.
+          new_file="$(git ls-files --others --exclude-standard -- reports/ | grep -Ev '^reports/queries/' | head -n1)"
           if [ -z "${new_file}" ]; then
             echo "No new report file — nothing to open a PR for."
             exit 0
@@ -95,6 +96,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "${branch}"
           git add "${new_file}"
+          queries_file="reports/queries/${stem}.sql.md"
+          if [ -f "${queries_file}" ]; then
+            git add "${queries_file}"
+          fi
           git commit -m "report: insights ${stem}"
           git push -u origin "${branch}"
 

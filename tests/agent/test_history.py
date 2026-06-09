@@ -69,6 +69,17 @@ def test_read_report_returns_full_text(tmp_path: Path) -> None:
     assert read_report("2026-05-20", reports_dir=tmp_path) == _REPORT_A
 
 
+def test_read_report_appends_queries_appendix_when_present(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    queries_dir = tmp_path / "queries"
+    queries_dir.mkdir()
+    (queries_dir / "2026-05-20.sql.md").write_text("## Query 1\nSELECT 1", encoding="utf-8")
+
+    out = read_report("2026-05-20", reports_dir=tmp_path)
+    assert out.startswith(_REPORT_A)
+    assert "## Query 1\nSELECT 1" in out
+
+
 def test_read_report_validates_date_format(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="YYYY-MM-DD"):
         read_report("20-05-2026", reports_dir=tmp_path)

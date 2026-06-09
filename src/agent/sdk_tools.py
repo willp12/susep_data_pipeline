@@ -9,6 +9,7 @@ guardrails and serialisation already live (and are tested) underneath.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -18,6 +19,32 @@ from src.agent.tools import describe_table, run_sql, sample_rows
 from src.agent.tools.bq_query import QueryTooExpensiveError
 
 SERVER_NAME = "bq"
+
+
+@dataclass
+class QueryLogEntry:
+    """One run_sql call, as captured for the report's SQL appendix."""
+
+    query_no: int
+    sql: str
+    status: str  # 'ok' | 'rejected' | 'error'
+    bytes_processed: int | None = None
+    row_count: int | None = None
+    cache_hit: bool | None = None
+    error: str | None = None
+
+
+# Run-scoped registry of every run_sql call. The agent process drives exactly
+# one run, and build_bq_server (called once per run) resets it.
+_QUERY_LOG: list[QueryLogEntry] = []
+
+
+def get_query_log() -> list[QueryLogEntry]:
+    return list(_QUERY_LOG)
+
+
+def reset_query_log() -> None:
+    _QUERY_LOG.clear()
 
 
 def _ok(payload: Any) -> dict[str, Any]:
@@ -65,16 +92,28 @@ async def sample_rows_tool(args: dict[str, Any]) -> dict[str, Any]:
     "run_sql",
     "Run read-only BigQuery Standard SQL. A mandatory dry-run rejects queries over "
     "the byte cap (~1 GiB) — always filter by the latest _ingestion_date and select "
-    "only the columns you need. Returns rows + bytes processed.",
+    "only the columns you need. Returns rows + bytes processed + a `query_no` you "
+    "must use to cite this query in the report.",
     {"sql": Annotated[str, "BigQuery Standard SQL query"]},
 )
 async def run_sql_tool(args: dict[str, Any]) -> dict[str, Any]:
+    sql = str(args["sql"])
+    entry = QueryLogEntry(query_no=len(_QUERY_LOG) + 1, sql=sql, status="error")
+    _QUERY_LOG.append(entry)
     try:
-        return _ok(run_sql(args["sql"]))
+        result = run_sql(sql)
     except QueryTooExpensiveError as exc:
+        entry.status = "rejected"
+        entry.error = str(exc)
         return _error(str(exc))
     except Exception as exc:
-        return _error(f"run_sql failed: {exc}")
+        entry.error = f"run_sql failed: {exc}"
+        return _error(entry.error)
+    entry.status = "ok"
+    entry.bytes_processed = result["bytes_processed"]
+    entry.row_count = result["row_count"]
+    entry.cache_hit = result["cache_hit"]
+    return _ok({"query_no": entry.query_no, **result})
 
 
 @tool(
@@ -97,5 +136,9 @@ ALLOWED_TOOLS = [f"mcp__{SERVER_NAME}__{t.name}" for t in _TOOLS]
 
 
 def build_bq_server() -> Any:
-    """Build the in-process MCP server exposing the three BQ tools."""
+    """Build the in-process MCP server exposing the three BQ tools.
+
+    Also resets the query log: one server build == one agent run.
+    """
+    reset_query_log()
     return create_sdk_mcp_server(name=SERVER_NAME, version="0.1.0", tools=_TOOLS)
