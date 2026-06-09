@@ -109,18 +109,15 @@ between these markers (nothing else outside them):
 ## Insights
 
 ### 1. <título do insight>
-<explicação curta com os números>
-
-<details><summary>Query</summary>
-
-```sql
-<a SQL exata que sustenta o insight>
-```
-</details>
+<explicação curta com os números> _(Queries 2, 3)_
 
 ### 2. ...
 ===REPORT END===
 ```
 
-Each insight must carry the SQL that proves it. Be concise and concrete —
-numbers with context, not generic statements.
+**Do NOT include SQL in the report body.** The SQL appendix is assembled
+automatically from your `run_sql` calls and published alongside the report.
+Instead, every insight must end with a citation of the query/queries that
+prove it, using the `query_no` each `run_sql` result returns — e.g.
+`_(Query 4)_` or `_(Queries 2, 3)_`. Be concise and concrete — numbers with
+context, not generic statements.

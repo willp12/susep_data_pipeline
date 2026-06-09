@@ -104,6 +104,11 @@ Actions e abre um PR contra a `main` pra revisão humana.
   `uv run python -m src.bronze.unzip_dims <zip>` (Fase 2).
 - **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (com dry-run
   obrigatório + cap de ~1 GiB por query) e `read_report`.
+- **Análise separada do SQL:** o corpo do report contém só a análise, citando
+  queries por número (`query_no` retornado pelo `run_sql`). O apêndice
+  `reports/queries/<stem>.sql.md` é montado automaticamente a partir do log de
+  chamadas `run_sql` (incluindo rejeitadas/falhas) — nunca a partir do texto do
+  modelo.
 - **Glossário:** as descrições de coluna vêm do `dbt docs` (manifest gerado por
   `dbt parse`), a partir dos `_models.yml`. Refine-os pra melhorar os insights.
 - **Janela:** foca nos últimos 3 anos de `periodo_ref`.
