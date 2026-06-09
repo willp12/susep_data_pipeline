@@ -1,7 +1,9 @@
 """Entrypoint for the SUSEP insights agent.
 
 Wires the BQ tools into a Claude Agent SDK run, drives one report-generation
-pass, and writes `reports/YYYY-MM-DD.md`.
+pass, and publishes the artifacts (analysis, SQL appendix, run log) to the GCS
+reports bucket — the source of truth. Local copies under `reports/` are scratch
+only (salvage if the upload fails).
 
 Run locally (needs ANTHROPIC_API_KEY in .env and the `claude` CLI installed):
 
@@ -33,17 +35,20 @@ from claude_agent_sdk import (
     query,
 )
 
+from src.agent.emailer import send_report
 from src.agent.glossary import build_glossary
 from src.agent.history import build_history_digest
+from src.agent.publisher import ReportStore, publish_run, queries_path, reserve_stem
 from src.agent.queries import render_queries_appendix, write_queries_appendix
-from src.agent.report import extract_body, render_report, reserve_report_path
+from src.agent.report import extract_body, render_report, write_local_copy
+from src.agent.runlog import collector, get_run_log_lines
 from src.agent.sdk_tools import (
     ALLOWED_TOOLS,
     SERVER_NAME,
     build_bq_server,
     get_query_log,
 )
-from src.config import get_settings
+from src.config import Settings, get_settings
 
 log = structlog.get_logger(__name__)
 
@@ -71,15 +76,30 @@ async def _prompt_stream() -> AsyncIterator[dict[str, Any]]:
     }
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(store: ReportStore) -> str:
     base = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     glossary = build_glossary()
-    history = build_history_digest()
+    history = build_history_digest(store=store)
     return (
         f"{base}\n\n"
         f"## Glossário (dbt docs)\n\n{glossary}\n\n"
         f"## Histórico de reports (o que já foi coberto)\n\n{history}\n"
     )
+
+
+def _provider_env(settings: Settings) -> dict[str, str]:
+    """Env for the SDK-spawned CLI process, per provider.
+
+    'local' targets LM Studio's Anthropic-compatible /v1/messages endpoint
+    (LM Studio >= 0.4.1): same SDK, different base URL, dummy token. Set
+    AGENT_MODEL to the LM Studio model id (e.g. google/gemma-3-27b).
+    """
+    if settings.agent_provider == "local":
+        return {
+            "ANTHROPIC_BASE_URL": settings.lmstudio_base_url,
+            "ANTHROPIC_AUTH_TOKEN": "lmstudio",
+        }
+    return {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
 
 
 async def _tool_gate(
@@ -98,23 +118,28 @@ async def _tool_gate(
 async def run_agent() -> dict[str, Any]:
     """Drive one agent pass and write the report. Returns run metadata."""
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if settings.agent_provider == "anthropic" and not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set — populate .env (see .env.example).")
     if not settings.gcp_project_id:
         raise RuntimeError("GCP_PROJECT_ID not set — populate .env.")
 
     report_date = datetime.now(UTC).date()
+    store = ReportStore()
 
     options = ClaudeAgentOptions(
         model=settings.agent_model,
-        system_prompt=_build_system_prompt(),
+        system_prompt=_build_system_prompt(store),
         mcp_servers={SERVER_NAME: build_bq_server()},
         allowed_tools=ALLOWED_TOOLS,
         can_use_tool=_tool_gate,
         permission_mode="default",
         max_turns=settings.agent_max_turns,
-        max_budget_usd=settings.agent_max_budget_usd,
-        env={"ANTHROPIC_API_KEY": settings.anthropic_api_key},
+        # Local runs cost nothing and report no usage — a USD cap would be
+        # meaningless there; max_turns is the guardrail that still applies.
+        max_budget_usd=(
+            settings.agent_max_budget_usd if settings.agent_provider == "anthropic" else None
+        ),
+        env=_provider_env(settings),
         cwd=str(_REPO_ROOT),
         # Don't inherit the repo's CLAUDE.md / settings into the agent run.
         setting_sources=None,
@@ -124,7 +149,11 @@ async def run_agent() -> dict[str, Any]:
     cost_usd: float | None = None
     model_used = settings.agent_model
 
-    log.info("agent.run.start", model=settings.agent_model)
+    log.info(
+        "agent.run.start",
+        model=settings.agent_model,
+        provider=settings.agent_provider,
+    )
     async for message in query(prompt=_prompt_stream(), options=options):
         if isinstance(message, AssistantMessage):
             model_used = message.model or model_used
@@ -144,11 +173,11 @@ async def run_agent() -> dict[str, Any]:
 
     # Analysis and SQL are separated: the body carries only the analysis
     # (citing queries by number) and the appendix is built deterministically
-    # from the run_sql log — never from model output.
+    # from the run_sql log — never from model output. The stem is reserved
+    # against the GCS manifest (the local fs is ephemeral in CI).
     query_log = get_query_log()
-    path = reserve_report_path(report_date)
-    stem = path.stem
-    queries_file = f"queries/{stem}.sql.md" if query_log else None
+    stem = reserve_stem(report_date, store.load_manifest())
+    queries_file = queries_path(stem) if query_log else None
 
     rendered = render_report(
         report_date=report_date,
@@ -159,21 +188,50 @@ async def run_agent() -> dict[str, Any]:
         ingestion_date_covered=None,
         queries_file=queries_file,
     )
-    path.write_text(rendered, encoding="utf-8")
+    queries_text = render_queries_appendix(stem, query_log) if query_log else None
 
-    queries_path: Path | None = None
-    if query_log:
-        queries_path = write_queries_appendix(render_queries_appendix(stem, query_log), stem)
+    # Local scratch copies first, so a failed upload never loses the run.
+    local_path = write_local_copy(rendered, stem)
+    if queries_text:
+        write_queries_appendix(queries_text, stem)
 
-    log.info(
-        "agent.run.report_written",
-        path=str(path),
-        queries_path=str(queries_path) if queries_path else None,
+    entry = publish_run(
+        store,
+        stem=stem,
+        report_date=report_date,
+        report_text=rendered,
+        body=body,
+        queries_text=queries_text,
+        log_lines=get_run_log_lines() or None,
+        model=model_used,
+        cost_usd=cost_usd,
         queries_run=len(query_log),
     )
+
+    log.info(
+        "agent.run.report_published",
+        bucket=store.bucket_name,
+        report_path=entry["report_path"],
+        local_path=str(local_path),
+        queries_run=len(query_log),
+    )
+
+    # Best-effort by design: the report is already published, so a failed or
+    # unconfigured send must not fail the run.
+    email_status = send_report(
+        stem=stem,
+        body=body,
+        report_text=rendered,
+        queries_text=queries_text,
+    )
+
     return {
-        "path": str(path),
-        "queries_path": str(queries_path) if queries_path else None,
+        "bucket": store.bucket_name,
+        "report_path": entry["report_path"],
+        "queries_path": entry["queries_path"],
+        "log_path": entry["log_path"],
+        "local_path": str(local_path),
+        "email_status": email_status,
         "queries_run": len(query_log),
         "cost_usd": cost_usd,
         "model": model_used,
@@ -185,6 +243,7 @@ def main() -> int:
         processors=[
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            collector,  # buffers events for logs/<stem>.jsonl
             structlog.dev.ConsoleRenderer(),
         ]
     )

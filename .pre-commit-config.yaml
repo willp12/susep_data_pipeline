@@ -35,3 +35,4 @@ repos:
           # The agent's @tool decorator is typed; mypy needs the package
           # present or it flags "untyped decorator" under strict mode.
           - claude-agent-sdk>=0.2
+          - types-markdown

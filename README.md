@@ -90,9 +90,10 @@ setar `BOOTSTRAP_ASSUME_YES=1`.
 
 ## Agente de insights
 
-Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e escreve um relatório
-de insights de negócio em `reports/YYYY-MM-DD.md`. Roda diariamente via GitHub
-Actions e abre um PR contra a `main` pra revisão humana.
+Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e gera um relatório
+diário de insights de negócio. Os artefatos vão pro **bucket GCS de reports**
+(análise, apêndice de queries e run log) e o report chega por **e-mail** pra
+revisão humana. Roda diariamente via GitHub Actions; nada é commitado no repo.
 
 ### Como funciona
 
@@ -128,30 +129,72 @@ A cada execução o agente escolhe um **modo** (declarado no sumário):
 Repetir um achado com o mesmo enquadramento é proibido; só vale reabordar uma
 métrica se houver informação nova (novo mês, recorte, causa).
 
-> **Importante:** o histórico considerado é o que está **mergeado na `main`**.
-> Como os reports entram via PR, um PR ainda aberto não entra na memória do run
-> seguinte — se acumular PRs sem mergear, a continuidade "atrasa".
+O histórico vem do **`manifest.json` do bucket GCS** (datas + títulos; 1 GET
+barato por run), e `read_report` baixa o report do bucket — um report publicado
+fica visível pro run seguinte imediatamente, sem esperar merge de PR. Reports
+antigos do repo entram no bucket via backfill one-off:
+
+```bash
+uv run python scripts/backfill_reports_to_gcs.py   # idempotente
+```
+
+### Entrega por e-mail
+
+Depois de publicar no GCS, o run envia o report por e-mail (Gmail SMTP com app
+password): corpo HTML renderizado da análise + os `.md` (report e apêndice de
+queries) anexados. Configuração via env — `SMTP_USERNAME`, `SMTP_APP_PASSWORD`
+(gerar em <https://myaccount.google.com/apppasswords>, requer 2FA) e
+`REPORT_EMAIL_TO`. Se faltar qualquer um, o envio é **pulado** com warning; o
+envio é best-effort e nunca falha o run (o report já está publicado).
 
 ### Rodar localmente
 
 ```bash
-# Pré-requisitos: ANTHROPIC_API_KEY no .env e a CLI do Claude Code instalada
+# Pré-requisitos: ANTHROPIC_API_KEY no .env, CLI do Claude Code instalada e o
+# bucket de reports criado (scripts/bootstrap/04_gcp_gcs_reports.sh)
 npm install -g @anthropic-ai/claude-code
 uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
-uv run python -m src.agent.main                          # escreve reports/<hoje>.md
+uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ```
+
+### Rodar com modelo local (LM Studio)
+
+O LM Studio (>= 0.4.1) expõe um endpoint **Anthropic-compatible** (`/v1/messages`),
+então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
+
+1. No LM Studio: carregar o modelo com **contexto >= 25k tokens** (o SDK é
+   pesado em contexto) e ligar o servidor local (aba Developer, porta 1234).
+2. No `.env`:
+
+   ```
+   AGENT_PROVIDER=local
+   AGENT_MODEL=google/gemma-3-27b      # id do modelo no LM Studio
+   LMSTUDIO_BASE_URL=http://localhost:1234
+   ```
+
+3. `uv run python -m src.agent.main` — publica no GCS e envia e-mail normalmente
+   (o cap de budget USD não se aplica; `AGENT_MAX_TURNS` continua valendo).
+
+> **Caveat:** o agente depende de *tool calling* confiável (muitas chamadas de
+> `run_sql`). O Gemma é fraco nisso; se ele não emitir tool calls direito,
+> modelos como **Qwen3** (14B / 30B-A3B) têm function calling nativo bem melhor
+> no LM Studio. O caminho Anthropic segue sendo o default do workflow diário —
+> o modo local é manual/experimental.
 
 ### Em produção (GitHub Actions)
 
 - **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP
-  via Workload Identity Federation (SA `bq-agent-readonly`, só leitura), roda o
-  agente e abre um PR com o report. Cada disparo gera um report **novo** sem
-  apagar o anterior: o 1º do dia é `YYYY-MM-DD.md`, reruns viram
-  `YYYY-MM-DD_2.md`, `_3.md`… (uma PR por report). Runs sobrepostos são
-  permitidos (sem `cancel-in-progress`).
+  via Workload Identity Federation (SA `bq-agent-readonly`: leitura no BQ +
+  `objectAdmin` no bucket de reports), roda o agente, **publica no GCS** e envia
+  o e-mail. Nada é commitado no repo; as cópias scratch viram artifact do
+  workflow (7 dias) como rede de segurança. Cada disparo gera um report
+  **novo**: o 1º do dia é `YYYY-MM-DD`, reruns ganham sufixo `_2`, `_3`…
+  (reservado no manifest do bucket). Runs sobrepostos são permitidos (sem
+  `cancel-in-progress`).
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
-- **Secrets/vars necessários:** secret `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
-  `GCP_AGENT_SA`; variável `GCP_PROJECT_ID`.
+- **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
+  `GCP_AGENT_SA`, `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`;
+  variável `GCP_PROJECT_ID`.
 
 ### Git workflow
 
@@ -178,7 +221,7 @@ susep-ses-pipeline/
 │   └── models/
 │       ├── staging/              # stg_ses_seguros (view)
 │       └── marts/                # fct_seguros (fato curado lido pelo agente)
-├── reports/                      # relatórios gerados pelo agente (YYYY-MM-DD.md)
+├── reports/                      # scratch local do run (fonte de verdade = bucket GCS)
 ├── tests/
 └── pyproject.toml
 ```

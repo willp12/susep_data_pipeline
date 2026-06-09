@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import dotenv_values, load_dotenv
 from pydantic import BaseModel, Field
@@ -36,6 +37,19 @@ class Settings(BaseModel):
     agent_model: str = Field(default="sonnet")
     agent_max_turns: int = Field(default=20)
     agent_max_budget_usd: float = Field(default=0.75)
+
+    # 'local' points the Agent SDK at LM Studio's Anthropic-compatible
+    # /v1/messages endpoint instead of the Anthropic API (no key needed).
+    agent_provider: Literal["anthropic", "local"] = Field(default="anthropic")
+    lmstudio_base_url: str = Field(default="http://localhost:1234")
+
+    # Report e-mail delivery (optional — leaving these empty disables sending).
+    smtp_host: str = Field(default="smtp.gmail.com")
+    smtp_port: int = Field(default=465)
+    smtp_username: str = Field(default="")
+    smtp_app_password: str = Field(default="")
+    report_email_to: str = Field(default="")
+    report_email_from: str = Field(default="")
 
 
 @lru_cache(maxsize=1)
@@ -72,4 +86,12 @@ def get_settings() -> Settings:
         agent_model=os.getenv("AGENT_MODEL", "sonnet"),
         agent_max_turns=int(os.getenv("AGENT_MAX_TURNS", "20")),
         agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.75")),
+        agent_provider=os.getenv("AGENT_PROVIDER", "anthropic"),  # type: ignore[arg-type]
+        lmstudio_base_url=os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
+        smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        smtp_port=int(os.getenv("SMTP_PORT", "465")),
+        smtp_username=os.getenv("SMTP_USERNAME", ""),
+        smtp_app_password=os.getenv("SMTP_APP_PASSWORD", ""),
+        report_email_to=os.getenv("REPORT_EMAIL_TO", ""),
+        report_email_from=os.getenv("REPORT_EMAIL_FROM", ""),
     )
