@@ -35,6 +35,7 @@ from claude_agent_sdk import (
     query,
 )
 
+from src.agent.emailer import send_report
 from src.agent.glossary import build_glossary
 from src.agent.history import build_history_digest
 from src.agent.publisher import ReportStore, publish_run, queries_path, reserve_stem
@@ -191,12 +192,23 @@ async def run_agent() -> dict[str, Any]:
         local_path=str(local_path),
         queries_run=len(query_log),
     )
+
+    # Best-effort by design: the report is already published, so a failed or
+    # unconfigured send must not fail the run.
+    email_status = send_report(
+        stem=stem,
+        body=body,
+        report_text=rendered,
+        queries_text=queries_text,
+    )
+
     return {
         "bucket": store.bucket_name,
         "report_path": entry["report_path"],
         "queries_path": entry["queries_path"],
         "log_path": entry["log_path"],
         "local_path": str(local_path),
+        "email_status": email_status,
         "queries_run": len(query_log),
         "cost_usd": cost_usd,
         "model": model_used,

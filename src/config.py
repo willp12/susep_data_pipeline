@@ -37,6 +37,14 @@ class Settings(BaseModel):
     agent_max_turns: int = Field(default=20)
     agent_max_budget_usd: float = Field(default=0.75)
 
+    # Report e-mail delivery (optional — leaving these empty disables sending).
+    smtp_host: str = Field(default="smtp.gmail.com")
+    smtp_port: int = Field(default=465)
+    smtp_username: str = Field(default="")
+    smtp_app_password: str = Field(default="")
+    report_email_to: str = Field(default="")
+    report_email_from: str = Field(default="")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -72,4 +80,10 @@ def get_settings() -> Settings:
         agent_model=os.getenv("AGENT_MODEL", "sonnet"),
         agent_max_turns=int(os.getenv("AGENT_MAX_TURNS", "20")),
         agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.75")),
+        smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        smtp_port=int(os.getenv("SMTP_PORT", "465")),
+        smtp_username=os.getenv("SMTP_USERNAME", ""),
+        smtp_app_password=os.getenv("SMTP_APP_PASSWORD", ""),
+        report_email_to=os.getenv("REPORT_EMAIL_TO", ""),
+        report_email_from=os.getenv("REPORT_EMAIL_FROM", ""),
     )

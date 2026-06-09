@@ -137,6 +137,15 @@ antigos do repo entram no bucket via backfill one-off:
 uv run python scripts/backfill_reports_to_gcs.py   # idempotente
 ```
 
+### Entrega por e-mail
+
+Depois de publicar no GCS, o run envia o report por e-mail (Gmail SMTP com app
+password): corpo HTML renderizado da análise + os `.md` (report e apêndice de
+queries) anexados. Configuração via env — `SMTP_USERNAME`, `SMTP_APP_PASSWORD`
+(gerar em <https://myaccount.google.com/apppasswords>, requer 2FA) e
+`REPORT_EMAIL_TO`. Se faltar qualquer um, o envio é **pulado** com warning; o
+envio é best-effort e nunca falha o run (o report já está publicado).
+
 ### Rodar localmente
 
 ```bash
