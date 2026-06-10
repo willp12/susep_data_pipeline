@@ -227,14 +227,20 @@ novas no BigQuery — mesmas tools, mesmo gate default-deny e mesmo toggle de
 provider (Anthropic ou LM Studio local) do agente diário.
 
 ```bash
-make chat        # ou: uv run python -m src.chat.cli
+make chat-ui     # interface web (Streamlit, http://localhost:8501)
+make chat        # ou o REPL no terminal: uv run python -m src.chat.cli
 ```
+
+Na UI: sidebar com os reports publicados (datas + títulos do manifest, botão
+**Explorar** pra puxar um report pra conversa), respostas com as tool calls
+visíveis (`read_report`, `run_sql`…), custo da sessão (provider anthropic) e
+**Nova conversa** pra zerar o contexto. A conversa vive numa `ChatSession`
+multi-turn por aba do navegador (ponte sync/async em `src/chat/bridge.py`).
 
 Comandos no REPL: `/reports` (temas já cobertos), `/custo`, `/sair`.
 Guardrails: `CHAT_MAX_TURNS` por pergunta e `CHAT_MAX_BUDGET_USD` pra conversa
 inteira (só no provider anthropic; local é grátis). Pré-requisitos: bucket
 populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
-Interface gráfica (Streamlit) vem num próximo PR.
 
 ### Rodar com modelo local (LM Studio)
 
