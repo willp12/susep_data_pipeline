@@ -17,6 +17,72 @@ BigQuery, usando AWS S3 como storage intermediário e dbt para transformações.
 - pydantic v2, structlog
 - ruff, mypy, pre-commit, pytest
 
+## Arquitetura
+
+```mermaid
+flowchart TB
+    subgraph ING["Ingestão — run manual (make run)"]
+        SUSEP["Site SUSEP SES<br/>(zip mensal)"]
+        PIPE["src/main.py<br/>scraper · hasher · downloader · unzip → parquet"]
+    end
+
+    subgraph DADOS["Dados"]
+        S3[("S3 susep-ses-data<br/>raw zip + parquet")]
+        BRZ[("BigQuery bronze<br/>ses_seguros · dims · ingestion_log")]
+        STG[("BigQuery staging<br/>stg_ses_seguros — view tipada")]
+        FCT[("BigQuery marts<br/>fct_seguros — fato curado + nomes oficiais")]
+    end
+
+    subgraph AGENTE["Agente de insights — GitHub Actions, diário (WIF + SA read-only)"]
+        RUN["src/agent/main.py<br/>Claude Agent SDK, one-shot"]
+        TOOLS["tools read-only (gate default-deny)<br/>describe_table · sample_rows · run_sql ≤1GiB · read_report"]
+    end
+
+    subgraph LLM["Provider LLM (AGENT_PROVIDER)"]
+        API["Anthropic API<br/>(default)"]
+        LMS["LM Studio local<br/>endpoint Anthropic-compatible"]
+    end
+
+    subgraph SERVING["Serving dos reports"]
+        GCS[("GCS {projeto}-susep-ses-reports<br/>reports/ · queries/ · logs/ · manifest.json")]
+        MAIL["E-mail (Gmail SMTP)<br/>HTML + .md anexos"]
+    end
+
+    subgraph CHAT["Chat analítico — local (make chat)"]
+        CLI["CLI REPL<br/>(Streamlit em breve)"]
+        SESS["ChatSession<br/>Claude Agent SDK, multi-turn"]
+    end
+
+    SUSEP --> PIPE --> S3
+    S3 -->|"src/loaders"| BRZ
+    BRZ -->|"dbt build"| STG -->|"dbt build"| FCT
+
+    RUN <--> TOOLS
+    TOOLS --> FCT
+    RUN -.-> API
+    RUN -.-> LMS
+
+    RUN -->|"análise + apêndice SQL + run log"| GCS
+    RUN --> MAIL
+    GCS -->|"digest do manifest<br/>(continuidade entre runs)"| RUN
+
+    CLI --> SESS
+    SESS <--> TOOLS
+    GCS -->|"digest + read_report"| SESS
+    SESS -.-> API
+    SESS -.-> LMS
+```
+
+Pontos de desenho:
+
+- **`fct_seguros` é o contrato**: agente e chat leem preferencialmente o fato
+  curado (dedup embutido, nomes oficiais via dims, métricas pré-computadas).
+- **O bucket GCS é a fonte de verdade dos reports** — nada de report no git; o
+  `manifest.json` (datas + títulos) dá memória/continuidade barata aos runs.
+- **Mesmo núcleo, dois modos**: o agente diário (one-shot) e o chat
+  (multi-turn) compartilham tools, gate, glossário, histórico e o toggle de
+  provider — Claude API ou LM Studio local.
+
 ## Setup local
 
 ### Pré-requisitos
