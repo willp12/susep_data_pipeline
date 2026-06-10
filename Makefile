@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test run dbt-build bootstrap clean
+.PHONY: install lint fmt test run chat dbt-build bootstrap clean
 
 install:
 	uv sync --all-groups
@@ -18,6 +18,9 @@ test:
 
 run:
 	uv run python -m src.main
+
+chat:
+	uv run python -m src.chat.cli
 
 dbt-build:
 	cd dbt && uv run dbt build --profiles-dir .
