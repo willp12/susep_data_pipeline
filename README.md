@@ -157,6 +157,24 @@ uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
 uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ```
 
+## Chat analítico
+
+Um chat multi-turn (`src/chat/`) pra conversar sobre os reports publicados e
+aprofundar temas: o agente recebe o digest do manifest (datas + títulos),
+puxa reports inteiros via `read_report` (com o SQL do apêndice) e roda queries
+novas no BigQuery — mesmas tools, mesmo gate default-deny e mesmo toggle de
+provider (Anthropic ou LM Studio local) do agente diário.
+
+```bash
+make chat        # ou: uv run python -m src.chat.cli
+```
+
+Comandos no REPL: `/reports` (temas já cobertos), `/custo`, `/sair`.
+Guardrails: `CHAT_MAX_TURNS` por pergunta e `CHAT_MAX_BUDGET_USD` pra conversa
+inteira (só no provider anthropic; local é grátis). Pré-requisitos: bucket
+populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
+Interface gráfica (Streamlit) vem num próximo PR.
+
 ### Rodar com modelo local (LM Studio)
 
 O LM Studio (>= 0.4.1) expõe um endpoint **Anthropic-compatible** (`/v1/messages`),

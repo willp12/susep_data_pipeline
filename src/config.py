@@ -43,6 +43,11 @@ class Settings(BaseModel):
     agent_provider: Literal["anthropic", "local"] = Field(default="anthropic")
     lmstudio_base_url: str = Field(default="http://localhost:1234")
 
+    # Interactive analyst chat (src.chat). max_turns is per question; the
+    # budget covers the whole conversation (anthropic provider only).
+    chat_max_turns: int = Field(default=30)
+    chat_max_budget_usd: float = Field(default=2.0)
+
     # Report e-mail delivery (optional — leaving these empty disables sending).
     smtp_host: str = Field(default="smtp.gmail.com")
     smtp_port: int = Field(default=465)
@@ -88,6 +93,8 @@ def get_settings() -> Settings:
         agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.75")),
         agent_provider=os.getenv("AGENT_PROVIDER", "anthropic"),  # type: ignore[arg-type]
         lmstudio_base_url=os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
+        chat_max_turns=int(os.getenv("CHAT_MAX_TURNS", "30")),
+        chat_max_budget_usd=float(os.getenv("CHAT_MAX_BUDGET_USD", "2.0")),
         smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(os.getenv("SMTP_PORT", "465")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),
