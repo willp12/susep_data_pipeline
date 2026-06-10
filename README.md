@@ -17,6 +17,67 @@ BigQuery, usando AWS S3 como storage intermediário e dbt para transformações.
 - pydantic v2, structlog
 - ruff, mypy, pre-commit, pytest
 
+## Arquitetura
+
+O fluxo segue o lifecycle de engenharia de dados — geração → ingestão →
+armazenamento → transformação → serving:
+
+```mermaid
+flowchart LR
+    subgraph GER["Geração"]
+        SUSEP["Site SUSEP SES<br/>(zip mensal)"]
+    end
+
+    subgraph ING["Ingestão<br/>(make run, manual)"]
+        PIPE["src/main.py<br/>scraper · hasher ·<br/>downloader · unzip → parquet"]
+    end
+
+    subgraph ARM["Armazenamento"]
+        S3[("S3 susep-ses-data<br/>raw zip + parquet")]
+        BRZ[("BigQuery bronze<br/>ses_seguros · dims ·<br/>ingestion_log")]
+    end
+
+    subgraph TRA["Transformação<br/>(dbt build)"]
+        STG[("staging<br/>stg_ses_seguros")]
+        FCT[("marts<br/>fct_seguros<br/>fato curado + nomes oficiais")]
+    end
+
+    subgraph SRV["Serving — analytics"]
+        RUN["Agente de insights<br/>diário, GitHub Actions<br/>(WIF + SA read-only)"]
+        GCS[("GCS reports bucket<br/>reports · queries · logs ·<br/>manifest.json")]
+        MAIL["E-mail<br/>(Gmail SMTP)"]
+        CHAT["Chat analítico<br/>local, multi-turn<br/>(make chat)"]
+    end
+
+    LLM["Provider LLM (AGENT_PROVIDER):<br/>Anthropic API ou LM Studio local"]
+
+    SUSEP --> PIPE
+    PIPE --> S3
+    S3 -->|"src/loaders"| BRZ
+    BRZ --> STG
+    STG --> FCT
+
+    FCT -->|"tools read-only<br/>run_sql ≤ 1 GiB"| RUN
+    FCT -->|"tools read-only"| CHAT
+    RUN -->|"análise + SQL + log"| GCS
+    RUN --> MAIL
+    GCS -.->|"digest do manifest<br/>(continuidade)"| RUN
+    GCS -.->|"digest + read_report"| CHAT
+
+    LLM -.- RUN
+    LLM -.- CHAT
+```
+
+Pontos de desenho:
+
+- **`fct_seguros` é o contrato**: agente e chat leem preferencialmente o fato
+  curado (dedup embutido, nomes oficiais via dims, métricas pré-computadas).
+- **O bucket GCS é a fonte de verdade dos reports** — nada de report no git; o
+  `manifest.json` (datas + títulos) dá memória/continuidade barata aos runs.
+- **Mesmo núcleo, dois modos**: o agente diário (one-shot) e o chat
+  (multi-turn) compartilham tools, gate, glossário, histórico e o toggle de
+  provider — Claude API ou LM Studio local.
+
 ## Setup local
 
 ### Pré-requisitos
@@ -156,6 +217,24 @@ npm install -g @anthropic-ai/claude-code
 uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
 uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
 ```
+
+## Chat analítico
+
+Um chat multi-turn (`src/chat/`) pra conversar sobre os reports publicados e
+aprofundar temas: o agente recebe o digest do manifest (datas + títulos),
+puxa reports inteiros via `read_report` (com o SQL do apêndice) e roda queries
+novas no BigQuery — mesmas tools, mesmo gate default-deny e mesmo toggle de
+provider (Anthropic ou LM Studio local) do agente diário.
+
+```bash
+make chat        # ou: uv run python -m src.chat.cli
+```
+
+Comandos no REPL: `/reports` (temas já cobertos), `/custo`, `/sair`.
+Guardrails: `CHAT_MAX_TURNS` por pergunta e `CHAT_MAX_BUDGET_USD` pra conversa
+inteira (só no provider anthropic; local é grátis). Pré-requisitos: bucket
+populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
+Interface gráfica (Streamlit) vem num próximo PR.
 
 ### Rodar com modelo local (LM Studio)
 

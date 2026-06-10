@@ -27,17 +27,15 @@ import structlog
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
-    PermissionResultAllow,
-    PermissionResultDeny,
     ResultMessage,
     TextBlock,
-    ToolPermissionContext,
     query,
 )
 
 from src.agent.emailer import send_report
 from src.agent.glossary import build_glossary
 from src.agent.history import build_history_digest
+from src.agent.providers import provider_env, require_provider_credentials
 from src.agent.publisher import ReportStore, publish_run, queries_path, reserve_stem
 from src.agent.queries import render_queries_appendix, write_queries_appendix
 from src.agent.report import extract_body, render_report, write_local_copy
@@ -47,8 +45,9 @@ from src.agent.sdk_tools import (
     SERVER_NAME,
     build_bq_server,
     get_query_log,
+    tool_gate,
 )
-from src.config import Settings, get_settings
+from src.config import get_settings
 
 log = structlog.get_logger(__name__)
 
@@ -87,39 +86,10 @@ def _build_system_prompt(store: ReportStore) -> str:
     )
 
 
-def _provider_env(settings: Settings) -> dict[str, str]:
-    """Env for the SDK-spawned CLI process, per provider.
-
-    'local' targets LM Studio's Anthropic-compatible /v1/messages endpoint
-    (LM Studio >= 0.4.1): same SDK, different base URL, dummy token. Set
-    AGENT_MODEL to the LM Studio model id (e.g. google/gemma-3-27b).
-    """
-    if settings.agent_provider == "local":
-        return {
-            "ANTHROPIC_BASE_URL": settings.lmstudio_base_url,
-            "ANTHROPIC_AUTH_TOKEN": "lmstudio",
-        }
-    return {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
-
-
-async def _tool_gate(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    context: ToolPermissionContext,
-) -> PermissionResultAllow | PermissionResultDeny:
-    """Default-deny: only the registered BQ tools may run."""
-    if tool_name in ALLOWED_TOOLS:
-        return PermissionResultAllow()
-    return PermissionResultDeny(
-        message=f"Tool '{tool_name}' is not allowed. Use only the bq tools.",
-    )
-
-
 async def run_agent() -> dict[str, Any]:
     """Drive one agent pass and write the report. Returns run metadata."""
     settings = get_settings()
-    if settings.agent_provider == "anthropic" and not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set — populate .env (see .env.example).")
+    require_provider_credentials(settings)
     if not settings.gcp_project_id:
         raise RuntimeError("GCP_PROJECT_ID not set — populate .env.")
 
@@ -131,7 +101,7 @@ async def run_agent() -> dict[str, Any]:
         system_prompt=_build_system_prompt(store),
         mcp_servers={SERVER_NAME: build_bq_server()},
         allowed_tools=ALLOWED_TOOLS,
-        can_use_tool=_tool_gate,
+        can_use_tool=tool_gate,
         permission_mode="default",
         max_turns=settings.agent_max_turns,
         # Local runs cost nothing and report no usage — a USD cap would be
@@ -139,7 +109,7 @@ async def run_agent() -> dict[str, Any]:
         max_budget_usd=(
             settings.agent_max_budget_usd if settings.agent_provider == "anthropic" else None
         ),
-        env=_provider_env(settings),
+        env=provider_env(settings),
         cwd=str(_REPO_ROOT),
         # Don't inherit the repo's CLAUDE.md / settings into the agent run.
         setting_sources=None,
