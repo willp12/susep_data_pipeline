@@ -19,58 +19,53 @@ BigQuery, usando AWS S3 como storage intermediário e dbt para transformações.
 
 ## Arquitetura
 
+O fluxo segue o lifecycle de engenharia de dados — geração → ingestão →
+armazenamento → transformação → serving:
+
 ```mermaid
-flowchart TB
-    subgraph ING["Ingestão — run manual (make run)"]
+flowchart LR
+    subgraph GER["Geração"]
         SUSEP["Site SUSEP SES<br/>(zip mensal)"]
-        PIPE["src/main.py<br/>scraper · hasher · downloader · unzip → parquet"]
     end
 
-    subgraph DADOS["Dados"]
+    subgraph ING["Ingestão<br/>(make run, manual)"]
+        PIPE["src/main.py<br/>scraper · hasher ·<br/>downloader · unzip → parquet"]
+    end
+
+    subgraph ARM["Armazenamento"]
         S3[("S3 susep-ses-data<br/>raw zip + parquet")]
-        BRZ[("BigQuery bronze<br/>ses_seguros · dims · ingestion_log")]
-        STG[("BigQuery staging<br/>stg_ses_seguros — view tipada")]
-        FCT[("BigQuery marts<br/>fct_seguros — fato curado + nomes oficiais")]
+        BRZ[("BigQuery bronze<br/>ses_seguros · dims ·<br/>ingestion_log")]
     end
 
-    subgraph AGENTE["Agente de insights — GitHub Actions, diário (WIF + SA read-only)"]
-        RUN["src/agent/main.py<br/>Claude Agent SDK, one-shot"]
-        TOOLS["tools read-only (gate default-deny)<br/>describe_table · sample_rows · run_sql ≤1GiB · read_report"]
+    subgraph TRA["Transformação<br/>(dbt build)"]
+        STG[("staging<br/>stg_ses_seguros")]
+        FCT[("marts<br/>fct_seguros<br/>fato curado + nomes oficiais")]
     end
 
-    subgraph LLM["Provider LLM (AGENT_PROVIDER)"]
-        API["Anthropic API<br/>(default)"]
-        LMS["LM Studio local<br/>endpoint Anthropic-compatible"]
+    subgraph SRV["Serving — analytics"]
+        RUN["Agente de insights<br/>diário, GitHub Actions<br/>(WIF + SA read-only)"]
+        GCS[("GCS reports bucket<br/>reports · queries · logs ·<br/>manifest.json")]
+        MAIL["E-mail<br/>(Gmail SMTP)"]
+        CHAT["Chat analítico<br/>local, multi-turn<br/>(make chat)"]
     end
 
-    subgraph SERVING["Serving dos reports"]
-        GCS[("GCS {projeto}-susep-ses-reports<br/>reports/ · queries/ · logs/ · manifest.json")]
-        MAIL["E-mail (Gmail SMTP)<br/>HTML + .md anexos"]
-    end
+    LLM["Provider LLM (AGENT_PROVIDER):<br/>Anthropic API ou LM Studio local"]
 
-    subgraph CHAT["Chat analítico — local (make chat)"]
-        CLI["CLI REPL<br/>(Streamlit em breve)"]
-        SESS["ChatSession<br/>Claude Agent SDK, multi-turn"]
-    end
-
-    SUSEP --> PIPE --> S3
+    SUSEP --> PIPE
+    PIPE --> S3
     S3 -->|"src/loaders"| BRZ
-    BRZ -->|"dbt build"| STG -->|"dbt build"| FCT
+    BRZ --> STG
+    STG --> FCT
 
-    RUN <--> TOOLS
-    TOOLS --> FCT
-    RUN -.-> API
-    RUN -.-> LMS
-
-    RUN -->|"análise + apêndice SQL + run log"| GCS
+    FCT -->|"tools read-only<br/>run_sql ≤ 1 GiB"| RUN
+    FCT -->|"tools read-only"| CHAT
+    RUN -->|"análise + SQL + log"| GCS
     RUN --> MAIL
-    GCS -->|"digest do manifest<br/>(continuidade entre runs)"| RUN
+    GCS -.->|"digest do manifest<br/>(continuidade)"| RUN
+    GCS -.->|"digest + read_report"| CHAT
 
-    CLI --> SESS
-    SESS <--> TOOLS
-    GCS -->|"digest + read_report"| SESS
-    SESS -.-> API
-    SESS -.-> LMS
+    LLM -.- RUN
+    LLM -.- CHAT
 ```
 
 Pontos de desenho:
