@@ -68,10 +68,12 @@ async def _amain() -> int:
                     if event.data.get("is_error"):
                         print("  [a resposta terminou com erro — veja acima]")
                     cost = event.data.get("cost_usd")
-                    if cost:
+                    # Local runs are free; the SDK still reports a fictitious
+                    # cost computed from token counts, so don't show it.
+                    if cost and session.provider == "anthropic":
                         print(f"  (custo da sessão até aqui: US$ {float(cost):.4f})")
 
-    if session.total_cost_usd:
+    if session.total_cost_usd and session.provider == "anthropic":
         print(f"\ncusto total da sessão: US$ {session.total_cost_usd:.4f}")
     print("até a próxima!")
     return 0
