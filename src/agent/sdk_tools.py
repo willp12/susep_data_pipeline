@@ -12,7 +12,13 @@ import json
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from claude_agent_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+    create_sdk_mcp_server,
+    tool,
+)
 
 from src.agent.history import read_report
 from src.agent.tools import describe_table, run_sql, sample_rows
@@ -133,6 +139,19 @@ async def read_report_tool(args: dict[str, Any]) -> dict[str, Any]:
 _TOOLS = [describe_table_tool, sample_rows_tool, run_sql_tool, read_report_tool]
 
 ALLOWED_TOOLS = [f"mcp__{SERVER_NAME}__{t.name}" for t in _TOOLS]
+
+
+async def tool_gate(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    context: ToolPermissionContext,
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Default-deny: only the registered BQ tools may run."""
+    if tool_name in ALLOWED_TOOLS:
+        return PermissionResultAllow()
+    return PermissionResultDeny(
+        message=f"Tool '{tool_name}' is not allowed. Use only the bq tools.",
+    )
 
 
 def build_bq_server() -> Any:
