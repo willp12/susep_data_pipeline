@@ -242,6 +242,13 @@ Guardrails: `CHAT_MAX_TURNS` por pergunta e `CHAT_MAX_BUDGET_USD` pra conversa
 inteira (só no provider anthropic; local é grátis). Pré-requisitos: bucket
 populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
 
+**Notícias da web (opcional):** com `TAVILY_API_KEY` no `.env` (free tier em
+<https://tavily.com>), o chat ganha a tool `search_news` — notícias recentes
+sobre seguradoras (parcerias, M&A, regulação) como **contexto** dos números,
+sempre citadas com fonte + data + link, nunca como fonte de cifras. Cap de
+`NEWS_MAX_SEARCHES` buscas por conversa (default 5). Sem a key, a tool não é
+registrada e nada muda. (Habilitar no report diário vem num próximo PR.)
+
 ### Rodar com modelo local (LM Studio)
 
 O LM Studio (>= 0.4.1) expõe um endpoint **Anthropic-compatible** (`/v1/messages`),

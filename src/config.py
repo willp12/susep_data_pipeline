@@ -48,6 +48,10 @@ class Settings(BaseModel):
     chat_max_turns: int = Field(default=30)
     chat_max_budget_usd: float = Field(default=2.0)
 
+    # News search (Tavily). Empty key = the search_news tool isn't registered.
+    tavily_api_key: str = Field(default="")
+    news_max_searches: int = Field(default=5)
+
     # Report e-mail delivery (optional — leaving these empty disables sending).
     smtp_host: str = Field(default="smtp.gmail.com")
     smtp_port: int = Field(default=465)
@@ -95,6 +99,8 @@ def get_settings() -> Settings:
         lmstudio_base_url=os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
         chat_max_turns=int(os.getenv("CHAT_MAX_TURNS", "30")),
         chat_max_budget_usd=float(os.getenv("CHAT_MAX_BUDGET_USD", "2.0")),
+        tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
+        news_max_searches=int(os.getenv("NEWS_MAX_SEARCHES", "5")),
         smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(os.getenv("SMTP_PORT", "465")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),
