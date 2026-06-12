@@ -162,13 +162,14 @@ async def read_report_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "search_news",
-    "Search recent web NEWS about an insurer/group/market theme (partnerships, "
-    "M&A, regulation, distribution deals) via Tavily. Returns title, source, "
-    "url, published date and snippet. News is CONTEXT — market figures still "
-    "come only from BigQuery, and every news mention must cite source + date + "
-    "url. Searches per run are capped.",
+    "Search recent Brazil-focused web news about an insurer/group/market theme "
+    "(partnerships, M&A, regulation, distribution deals) via Tavily. WRITE THE "
+    "QUERY IN PORTUGUESE (e.g. 'CAIXA Seguridade parceria varejo'). Returns "
+    "title, source, url, published date and snippet. News is CONTEXT — market "
+    "figures still come only from BigQuery, and every news mention must cite "
+    "source + date + url. Searches per run are capped.",
     {
-        "query": Annotated[str, "Search query, e.g. 'CAIXA Seguridade parceria varejo'"],
+        "query": Annotated[str, "Search query IN PORTUGUESE, e.g. 'BB Seguros parceria varejo'"],
         "days_back": Annotated[int, "Recency window in days (default 90)"],
         "max_results": Annotated[int, "Results to return, 1-10 (default 5)"],
     },
