@@ -51,6 +51,8 @@ class Settings(BaseModel):
     # News search (Tavily). Empty key = the search_news tool isn't registered.
     tavily_api_key: str = Field(default="")
     news_max_searches: int = Field(default=5)
+    # Optional CSV whitelist of outlets (e.g. specialised insurance press).
+    news_include_domains: str = Field(default="")
 
     # Report e-mail delivery (optional — leaving these empty disables sending).
     smtp_host: str = Field(default="smtp.gmail.com")
@@ -101,6 +103,7 @@ def get_settings() -> Settings:
         chat_max_budget_usd=float(os.getenv("CHAT_MAX_BUDGET_USD", "2.0")),
         tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
         news_max_searches=int(os.getenv("NEWS_MAX_SEARCHES", "5")),
+        news_include_domains=os.getenv("NEWS_INCLUDE_DOMAINS", ""),
         smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
         smtp_port=int(os.getenv("SMTP_PORT", "465")),
         smtp_username=os.getenv("SMTP_USERNAME", ""),
