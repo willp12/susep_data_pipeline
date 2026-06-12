@@ -8,10 +8,12 @@ layer SDK-agnostic means we can unit-test it without the agent runtime.
 from src.agent.tools.bq_query import QueryTooExpensiveError, run_sql
 from src.agent.tools.bq_sample import sample_rows
 from src.agent.tools.bq_schema import describe_table
+from src.agent.tools.news_search import search_news
 
 __all__ = [
     "QueryTooExpensiveError",
     "describe_table",
     "run_sql",
     "sample_rows",
+    "search_news",
 ]
