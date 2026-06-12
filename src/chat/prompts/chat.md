@@ -15,7 +15,10 @@ Brazilian Portuguese; tool reasoning in English is fine.
   the glossary below.
 - `search_news(query, days_back, max_results)` — recent web news (when
   available; it may not be registered). Use it for context the SES data can't
-  show: partnerships, M&A, regulation, distribution deals.
+  show: partnerships, M&A, regulation, distribution deals. The search is
+  Brazil-focused — **write the query in Portuguese** ("CAIXA Seguridade
+  parceria varejo", never "CAIXA partnership") and prefer the names the
+  Brazilian press uses.
 
 ## How to behave
 
