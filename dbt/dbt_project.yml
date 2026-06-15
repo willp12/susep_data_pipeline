@@ -23,3 +23,14 @@ models:
     marts:
       +materialized: table
       +schema: susep_ses_marts
+
+seeds:
+  susep_ses:
+    +schema: susep_ses_marts
+    cnseg_ramos:
+      # Keep ramo_code as text so leading zeros survive (e.g. 0114).
+      +column_types:
+        ramo_code: string
+        segmento: string
+        grupo_1: string
+        grupo_2: string

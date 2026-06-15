@@ -1,0 +1,23 @@
+version: 2
+
+seeds:
+  - name: cnseg_ramos
+    description: >
+      CNSeg ramo de-para: maps each SUSEP ramo (4-digit code) to the CNSeg
+      taxonomy segmento → grupo_1 → grupo_2. Hand-maintained reference, sourced
+      from the CNSeg site spreadsheet (aba De_Para_Ramos), deduped to one row
+      per ramo_code. Refresh by re-exporting the sheet when CNSeg revises it.
+    columns:
+      - name: ramo_code
+        description: "SUSEP ramo code (4 digits, leading zeros preserved)."
+        data_tests:
+          - unique
+          - not_null
+      - name: segmento
+        description: "CNSeg segment."
+        data_tests:
+          - not_null
+      - name: grupo_1
+        description: "CNSeg level-1 group."
+      - name: grupo_2
+        description: "CNSeg level-2 group."

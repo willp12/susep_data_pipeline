@@ -74,13 +74,23 @@ agg as (
 
 select
     a.*,
+    -- Canonical "prêmio emitido" = insurance premium + capitalization premium.
+    -- COALESCE so a row carrying only one segment isn't nulled out. The raw
+    -- SUSEP field premio_emitido2 stays above for traceability.
+    coalesce(a.premio_de_seguros, 0) + coalesce(a.premio_emitido_cap, 0) as premio_emitido,
     substr(a.branch_code, 1, 2)  as ramo_group_code,
     r.branch_name,
     gr.ramo_group_name,
+    -- CNSeg taxonomy (parallel to SUSEP's ramo group); NULL when a ramo isn't
+    -- in the de-para — covered by a warn-level coverage test.
+    c.cnseg_segmento,
+    c.cnseg_grupo_1,
+    c.cnseg_grupo_2,
     e.entity_name,
     ge.economic_group_name
 from agg as a
 left join {{ ref('dim_ramo') }}            as r  on r.branch_code = a.branch_code
 left join {{ ref('dim_grupo_ramo') }}      as gr on gr.ramo_group_code = substr(a.branch_code, 1, 2)
+left join {{ ref('dim_cnseg') }}           as c  on c.branch_code = a.branch_code
 left join {{ ref('dim_entidade') }}        as e  on e.entity_code = a.entity_code
 left join {{ ref('dim_grupo_economico') }} as ge on ge.economic_group_code = a.economic_group_code
