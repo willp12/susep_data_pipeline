@@ -39,7 +39,7 @@ models:
       - name: desp_com
         description: "Commercialisation expense / commissions (BRL)."
       - name: premio_emitido2
-        description: "Issued premium, alternate measure (BRL)."
+        description: "Raw SUSEP issued-premium field (BRL). Kept for traceability; prefer premio_emitido."
       - name: premio_emitido_cap
         description: "Issued premium, capitalisation (BRL)."
       - name: despesa_resseguros
@@ -68,6 +68,20 @@ models:
         description: "Ramo (line of business) name, from dim_ramo. NULL if the code isn't in the lookup."
       - name: ramo_group_name
         description: "Line-of-business group name (e.g. '01 - Patrimonial'), from dim_grupo_ramo."
+      - name: premio_emitido
+        description: >
+          Canonical issued premium = premio_de_seguros + premio_emitido_cap
+          (insurance + capitalisation; COALESCE-summed). Use THIS as 'prêmio
+          emitido', not premio_emitido2.
+      - name: cnseg_segmento
+        description: >
+          CNSeg segment (Danos e Responsabilidades, Coberturas de Pessoas,
+          Capitalização, Saúde Suplementar), from dim_cnseg. A taxonomy parallel
+          to SUSEP's ramo group — NULL if the ramo isn't in the CNSeg de-para.
+      - name: cnseg_grupo_1
+        description: "CNSeg level-1 group (e.g. Automóvel, Patrimonial, Transportes), from dim_cnseg."
+      - name: cnseg_grupo_2
+        description: "CNSeg level-2 group (finer than grupo_1), from dim_cnseg."
       - name: entity_name
         description: "Insurer name, from dim_entidade."
       - name: economic_group_name
@@ -109,3 +123,21 @@ models:
         description: "Conglomerate code. Joins fct_seguros.economic_group_code."
       - name: economic_group_name
         description: "Most recent economic-group name (Ses_grupos_economicos)."
+
+  - name: dim_cnseg
+    description: >
+      CNSeg ramo taxonomy (segmento → grupo_1 → grupo_2), keyed on branch_code.
+      A hand-maintained mapping distinct from SUSEP's ramo group, sourced from
+      the cnseg_ramos seed. 1 row per branch_code.
+    columns:
+      - name: branch_code
+        description: "Ramo code (4 digits). Joins fct_seguros.branch_code."
+        data_tests:
+          - unique
+          - not_null
+      - name: cnseg_segmento
+        description: "CNSeg segment (4 values)."
+      - name: cnseg_grupo_1
+        description: "CNSeg level-1 group."
+      - name: cnseg_grupo_2
+        description: "CNSeg level-2 group."
