@@ -39,7 +39,7 @@ flowchart LR
 
     subgraph TRA["Transformação<br/>(dbt build)"]
         STG[("staging<br/>stg_ses_seguros")]
-        FCT[("marts<br/>fct_seguros<br/>fato curado + nomes oficiais")]
+        FCT[("marts<br/>fct_seguros + dims<br/>nomes oficiais · CNSeg · premio_emitido")]
     end
 
     subgraph SRV["Serving — analytics"]
@@ -165,6 +165,13 @@ revisão humana. Roda diariamente via GitHub Actions; nada é commitado no repo.
   `entity_name` e `economic_group_name` (joins das `dim_*`), pra o agente não
   inferir rótulos. As dims vêm das tabelas de domínio do SES, carregadas por
   `uv run python -m src.bronze.unzip_dims <zip>` (Fase 2).
+- **Taxonomia CNSeg:** além do grupo de ramos SUSEP, a fct traz
+  `cnseg_segmento` / `cnseg_grupo_1` / `cnseg_grupo_2` (via `dim_cnseg`), um
+  de-para curado mantido no seed `dbt/seeds/cnseg_ramos.csv` — corte de mercado
+  paralelo ao da SUSEP. Atualize re-exportando a aba `De_Para_Ramos`.
+- **Prêmio emitido:** a coluna canônica `premio_emitido` = `premio_de_seguros`
+  + `premio_emitido_cap` (seguros + capitalização). `premio_emitido2` é o campo
+  cru da SUSEP, mantido só pra rastreabilidade.
 - **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (com dry-run
   obrigatório + cap de ~1 GiB por query) e `read_report`.
 - **Análise separada do SQL:** o corpo do report contém só a análise, citando
