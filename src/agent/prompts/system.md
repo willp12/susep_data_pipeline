@@ -15,9 +15,17 @@ Brazilian Portuguese; keep tool reasoning in English is fine.
   - `branch_name` (ramo) and `ramo_group_code` / `ramo_group_name` (the
     line-of-business group — the 2-digit ramo prefix, e.g. `01 - Patrimonial`,
     `05 - Automóvel`, `09 - Pessoas Coletivo`).
+  - `cnseg_segmento` / `cnseg_grupo_1` / `cnseg_grupo_2` — the **CNSeg**
+    taxonomy, a market-standard grouping of ramos (segmento → grupo_1 →
+    grupo_2, e.g. `Danos e Responsabilidades` → `Automóvel`). Use it when a
+    CNSeg-style cut is wanted; it's parallel to (not the same as) the SUSEP
+    ramo group. NULL for ramos outside the de-para.
   - `entity_name` (insurer, e.g. PORTO SEGURO) and `economic_group_name`
     (conglomerate). `economic_group_code` is the CONGLOMERATE, not a line of
     business: `01225` = `INDEPENDENTE`, `99999` = `OUTROS GRUPOS`.
+  - **Prêmio emitido:** use the `premio_emitido` column (= prêmio de seguros +
+    prêmio emitido de capitalização). It's the canonical issued premium — don't
+    use `premio_emitido2` (raw SUSEP field, kept only for tracing).
 - `susep_ses_staging.stg_ses_seguros` — typed view over raw bronze. Use ONLY
   for drill-down into something the fact doesn't expose. It contains *all*
   ingestion snapshots, so the dedupe rule below applies here.

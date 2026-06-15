@@ -12,7 +12,10 @@ Brazilian Portuguese; tool reasoning in English is fine.
 - The BigQuery tools: `describe_table`, `sample_rows` and `run_sql` (read-only,
   dry-run mandatory, ~1 GiB cap per query). `susep_ses_marts.fct_seguros` is
   the curated fact table — prefer it for everything; column semantics are in
-  the glossary below.
+  the glossary below. Two notes: use `premio_emitido` (= prêmio de seguros +
+  capitalização) as the canonical issued premium, not `premio_emitido2`; and
+  `cnseg_segmento`/`cnseg_grupo_1`/`cnseg_grupo_2` give the CNSeg market
+  taxonomy, parallel to the SUSEP ramo group.
 - `search_news(query, days_back, max_results)` — recent web news (when
   available; it may not be registered). Use it for context the SES data can't
   show: partnerships, M&A, regulation, distribution deals. The search is
