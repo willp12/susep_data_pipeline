@@ -2,9 +2,10 @@
 
 Infrastructure as code for the SUSEP SES pipeline (GCP). This replaces the
 imperative `scripts/bootstrap/*.sh` over a staged migration — see the
-[roadmap](#roadmap) below. **Etapa 0 (this PR) is scaffold only**: backend,
-provider, variables and docs. No resources are declared yet, so `plan` shows
-nothing to do — Etapa 1 adopts the live infra via `import {}` blocks.
+[roadmap](#roadmap) below. As of Etapa 1, the core GCP resources (datasets,
+service accounts, IAM, reports bucket) are adopted into Terraform via
+`import {}` blocks with a verified no-op `plan` (nothing recreated). WIF
+(Etapa 1c) and the S3→GCS data move (Etapa 2) are still pending.
 
 ## First-time setup
 
@@ -36,8 +37,9 @@ Never let Terraform destroy-and-recreate a stateful resource.
 
 | Etapa | Escopo | Estado |
 | ----- | ------ | ------ |
-| 0 | Scaffold: `versions`/`backend`/`providers`/`variables` + state bucket script + docs | **este PR** |
-| 1 | Import da infra GCP existente (datasets + `ingestion_log`, bucket de reports, 2 SAs + bindings, WIF). Meta: `plan` no-op | a fazer |
+| 0 | Scaffold: `versions`/`backend`/`providers`/`variables` + state bucket script + docs | ✅ feito |
+| 1 | Import: 3 datasets, 2 SAs, project IAM, dataset WRITER, reports bucket + IAM. `plan` no-op verificado (13 imported, 0 destroyed) | ✅ feito |
+| 1c | Import do WIF (pool/provider + binding) — isolado por ser o mais delicado e compartilhado com o insights | a fazer |
 | 2 | Bucket GCS de dados + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`) | a fazer |
 | 3 | (opcional) provider `github` p/ secrets; auth do ingest via WIF (aposenta `GCP_SA_KEY`) | a fazer |
 | 4 | Remove bootstrap `00`–`05`; `make bootstrap` → `terraform apply`; tear down AWS | a fazer |
