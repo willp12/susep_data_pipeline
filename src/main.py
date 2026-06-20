@@ -2,9 +2,9 @@
 
 This is the MVP entrypoint. Designed for one-shot manual runs — no retry
 logic beyond what each step already has, no crash recovery, no partial
-re-runs. Each step already produces an auditable artefact (an S3 object or
+re-runs. Each step already produces an auditable artefact (a GCS object or
 a BQ row), so a failed run can be resumed by running the downstream steps
-against the last successful S3 URI.
+against the last successful GCS URI.
 
 Orchestration is deliberately a flat `run()` function rather than a DAG
 library — we have five steps in a fixed linear order, and a DAG would just
@@ -95,10 +95,10 @@ def run() -> dict[str, str]:
         log.info("main.short_circuit", reason="SUSEP zip unchanged since last ingest")
         return outcome
 
-    bronze = run_bronze_build(raw["s3_uri"])
+    bronze = run_bronze_build(raw["gcs_uri"])
     log.info("main.bronze.done", **bronze)
 
-    bronze_uri = bronze["bronze_s3_uri"]
+    bronze_uri = bronze["bronze_gcs_uri"]
     assert isinstance(bronze_uri, str)  # narrow dict[str, str|int] for mypy
     load = run_bronze_load(bronze_uri)
     log.info("main.load.done", **load)
