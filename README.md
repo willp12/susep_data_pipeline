@@ -28,8 +28,8 @@ flowchart LR
         SUSEP["Site SUSEP SES<br/>(zip mensal)"]
     end
 
-    subgraph ING["Ingestão<br/>(make run, manual)"]
-        PIPE["src/main.py<br/>scraper · hasher ·<br/>downloader · unzip → parquet"]
+    subgraph ING["Ingestão<br/>(semanal: ingest.yml · ou make run)"]
+        PIPE["src/main.py<br/>scraper · pré-check ·<br/>downloader · unzip → parquet"]
     end
 
     subgraph ARM["Armazenamento"]
@@ -63,6 +63,8 @@ flowchart LR
     RUN --> MAIL
     GCS -.->|"digest do manifest<br/>(continuidade)"| RUN
     GCS -.->|"digest + read_report"| CHAT
+
+    PIPE -.->|"período novo<br/>dispara report"| RUN
 
     LLM -.- RUN
     LLM -.- CHAT
@@ -291,10 +293,18 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
   **novo**: o 1º do dia é `YYYY-MM-DD`, reruns ganham sufixo `_2`, `_3`…
   (reservado no manifest do bucket). Runs sobrepostos são permitidos (sem
   `cancel-in-progress`).
+- **`ingest.yml`** — `schedule` **semanal** (segundas) + `workflow_dispatch`.
+  Autentica no GCP por **chave JSON** (`GCP_SA_KEY`, a SA de escrita
+  `susep-ingest`) e na AWS por access key (secrets), roda `python -m src.main`
+  (scrape → pré-check barato → ingere só se mudou → `dbt build`). Em período
+  novo: e-mail de aviso (pelo próprio pipeline) + dispara o `insights.yml`.
+  Um ingest por vez (`concurrency`), pois escreve no S3/BQ e reconstrói os
+  marts.
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
 - **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
-  `GCP_AGENT_SA`, `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`;
-  variável `GCP_PROJECT_ID`.
+  `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY`, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY` (ingestão, escrita), `SMTP_USERNAME`,
+  `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`; variável `GCP_PROJECT_ID`.
 
 ### Git workflow
 

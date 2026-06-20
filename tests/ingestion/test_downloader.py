@@ -76,6 +76,7 @@ def test_tier1_skips_download_when_generated_at_matches(
     assert harness["downloaded"] is False  # the whole point: no 500 MB pull
     assert harness["uploaded"] is False
     assert result["file_hash"] == "HASH_OLD"  # carried forward
+    assert result["period"] == "202602"
     (entry,) = harness["entries"]
     assert entry["status"] == "no_change"
     assert entry["generated_at"] == "10/03/2026 08:00:00"

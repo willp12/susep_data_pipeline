@@ -30,6 +30,7 @@ from pathlib import Path
 
 import structlog
 
+from src.agent.emailer import send_ingest_notification
 from src.bronze.unzip_to_parquet import run_bronze_build
 from src.config import get_settings
 from src.ingestion.downloader import run_raw_ingest
@@ -77,17 +78,22 @@ def _run_dbt_build() -> None:
     log.info("main.dbt.build.ok")
 
 
-def run() -> int:
-    """Execute the full pipeline once. Returns a process exit code."""
+def run() -> dict[str, str]:
+    """Execute the full pipeline once. Returns {status, period}.
+
+    ``status`` is 'no_change' (nothing new on SUSEP — short-circuited) or
+    'ingested' (a new dump went through bronze → load → dbt build).
+    """
     _configure_logging()
     log.info("main.start")
 
     raw = run_raw_ingest()
     log.info("main.raw.done", **raw)
+    outcome = {"status": raw["status"], "period": raw.get("period", "")}
 
     if raw["status"] == "no_change":
-        log.info("main.short_circuit", reason="SUSEP zip hash unchanged since last ingest")
-        return 0
+        log.info("main.short_circuit", reason="SUSEP zip unchanged since last ingest")
+        return outcome
 
     bronze = run_bronze_build(raw["s3_uri"])
     log.info("main.bronze.done", **bronze)
@@ -100,15 +106,35 @@ def run() -> int:
     _run_dbt_build()
 
     log.info("main.ok")
-    return 0
+    return outcome
+
+
+def _emit_github_output(outcome: dict[str, str]) -> None:
+    """Expose the outcome as GitHub Actions step outputs (no-op locally)."""
+    gh_output = os.environ.get("GITHUB_OUTPUT")
+    if not gh_output:
+        return
+    with open(gh_output, "a", encoding="utf-8") as fh:
+        fh.write(f"status={outcome['status']}\n")
+        fh.write(f"period={outcome['period']}\n")
 
 
 def main() -> int:
     try:
-        return run()
+        outcome = run()
     except Exception as exc:
         sys.stderr.write(f"[main] ERROR: {exc}\n")
         return 1
+
+    _emit_github_output(outcome)
+    print(f"[main] status={outcome['status']} period={outcome['period']}")
+
+    # A new period just landed: notify by e-mail (skipped when SMTP isn't
+    # configured, e.g. local runs). Triggering the insights report is the
+    # workflow's job — it needs the Actions API, which main.py shouldn't touch.
+    if outcome["status"] == "ingested":
+        send_ingest_notification(period=outcome["period"])
+    return 0
 
 
 if __name__ == "__main__":
