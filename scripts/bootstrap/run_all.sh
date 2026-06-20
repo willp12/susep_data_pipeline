@@ -10,6 +10,7 @@ SCRIPTS=(
   "02_gcp_apis.sh"
   "03_gcp_bigquery.sh"
   "04_gcp_gcs_reports.sh"
+  "05_gcp_ingest_sa.sh"
 )
 
 printf '[bootstrap] Running %d scripts from %s\n' "${#SCRIPTS[@]}" "${SCRIPT_DIR}"
