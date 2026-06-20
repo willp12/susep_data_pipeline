@@ -132,7 +132,8 @@ configuração viva pro estado desejado em vez de recriar recursos:
 | `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com` (necessária pra impersonação via WIF na CI). |
 | `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. Converge aditivamente (adiciona colunas nullable novas em rerun, ex.: `period`/`generated_at`). **Nunca faz DELETE/DROP nem ALTER destrutivo.** |
 | `04_gcp_gcs_reports.sh`   | Cria o bucket GCS dos reports do agente — `{GCP_PROJECT_ID}-susep-ses-reports` (override via `GCP_REPORTS_BUCKET`): location US, uniform access, versioning, public access prevention. Se `GCP_AGENT_SA` estiver no `.env` (a SA `bq-agent-readonly@...` usada na CI), concede `roles/storage.objectAdmin` no bucket. |
-| `run_all.sh`              | Roda `00 → 01 → 02 → 03 → 04`, para no primeiro erro.                   |
+| `05_gcp_ingest_sa.sh`     | Cria a SA de **escrita** da ingestão (`susep-ingest@...`): `roles/bigquery.jobUser` (projeto) + `WRITER` (dataEditor) nos datasets bronze/staging/marts. Imprime os passos manuais pra gerar a chave JSON (`GCP_SA_KEY`) e os secrets AWS. Idempotente; nunca remove binding. |
+| `run_all.sh`              | Roda `00 → 01 → 02 → 03 → 04 → 05`, para no primeiro erro.              |
 
 Para rodar não-interativamente (pular o prompt de confirmação do preflight),
 setar `BOOTSTRAP_ASSUME_YES=1`.
