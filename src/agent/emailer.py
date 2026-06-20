@@ -15,7 +15,6 @@ from __future__ import annotations
 import smtplib
 from email.message import EmailMessage
 
-import markdown
 import structlog
 
 from src.config import Settings, get_settings
@@ -28,6 +27,10 @@ def is_configured(settings: Settings) -> bool:
 
 
 def render_html(body: str, stem: str) -> str:
+    # Imported lazily so the ingestion pipeline (which only sends the plain
+    # text notice) doesn't need the agent group's markdown dependency.
+    import markdown
+
     inner = markdown.markdown(body, extensions=["tables", "fenced_code"])
     return (
         '<html><body style="font-family: sans-serif; max-width: 720px;">'
@@ -93,14 +96,46 @@ def send_report(
         sender=sender,
         to=settings.report_email_to,
     )
+    return _deliver(msg, settings)
+
+
+def _deliver(msg: EmailMessage, settings: Settings) -> str:
+    """Send a prepared message via SMTP SSL. Returns 'sent' or 'failed'.
+
+    Best-effort by design: a delivery failure logs loudly but never raises —
+    callers treat e-mail as a notification, not a critical path.
+    """
     try:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
             smtp.login(settings.smtp_username, settings.smtp_app_password)
             smtp.send_message(msg)
     except Exception as exc:
-        # The report is already published; e-mail failure must not fail the run.
-        log.error("agent.email.failed", error=str(exc))
+        log.error("agent.email.failed", error=str(exc), subject=msg["Subject"])
         return "failed"
 
-    log.info("agent.email.sent", to=settings.report_email_to, subject=msg["Subject"])
+    log.info("agent.email.sent", to=msg["To"], subject=msg["Subject"])
     return "sent"
+
+
+def send_ingest_notification(*, period: str) -> str:
+    """E-mail a short 'new period ingested' notice. Returns sent/skipped/failed.
+
+    Sent by the ingestion pipeline when a new SUSEP dump goes through; skipped
+    when SMTP isn't configured (e.g. local runs), so it's safe to call always.
+    """
+    settings = get_settings()
+    if not is_configured(settings):
+        log.warning("agent.email.skipped", reason="SMTP not configured")
+        return "skipped"
+
+    label = period or "novo período"
+    msg = EmailMessage()
+    msg["Subject"] = f"SUSEP SES — novo período ingerido ({label})"
+    msg["From"] = settings.report_email_from or settings.smtp_username
+    msg["To"] = settings.report_email_to
+    msg.set_content(
+        f"A ingestão detectou e carregou um novo período da base SUSEP SES: {label}.\n\n"
+        "Os marts foram reconstruídos (dbt build) e o relatório de insights será "
+        "gerado em seguida."
+    )
+    return _deliver(msg, settings)

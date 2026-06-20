@@ -1,0 +1,76 @@
+name: ingest
+
+# Weekly check for a new SUSEP SES dump, with end-to-end ingestion when one
+# lands. The pipeline is idempotent and cheap to no-op: it scrapes the landing
+# page, skips the ~500 MB download when the generation timestamp is unchanged
+# (Tier-1 pre-check), and only runs bronze → load → dbt build on a real change.
+#
+# On a new period it triggers the insights workflow (which regenerates and
+# e-mails the report); a short "new period ingested" notice is e-mailed by the
+# pipeline itself. SUSEP refreshes ~monthly, so weekly catches it within days.
+#
+# Auth is key-based (per decision): GCP via a SA JSON key (GCP_SA_KEY), AWS via
+# access-key secrets — distinct from the read-only insights workflow (WIF).
+
+on:
+  schedule:
+    - cron: "0 12 * * 1" # Mondays 12:00 UTC ≈ 09:00 BRT
+  workflow_dispatch:
+
+permissions:
+  contents: read # checkout only
+  actions: write # dispatch insights.yml on a new period
+
+# One ingest at a time — it writes to S3/BQ and rebuilds the marts. A queued
+# run waits rather than racing a running one.
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_BQ_LOCATION: US
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (service-account key)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync # core deps only — ingestion doesn't need the agent group
+
+      - name: Run ingestion (scrape → check → ingest → dbt build)
+        id: ingest
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+          # SMTP for the "new period ingested" notice (skipped if unset).
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+        run: uv run python -m src.main
+
+      - name: Trigger the insights report on a new period
+        if: steps.ingest.outputs.status == 'ingested'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "New period ${{ steps.ingest.outputs.period }} ingested — dispatching insights."
+          gh workflow run insights.yml

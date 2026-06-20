@@ -162,6 +162,7 @@ def run_raw_ingest() -> dict[str, str]:
             "file_hash": previous.file_hash,
             "source_url": info.url,
             "s3_uri": "",
+            "period": period or "",
         }
 
     with tempfile.TemporaryDirectory(prefix="susep-raw-") as tmpdir:
@@ -219,6 +220,7 @@ def run_raw_ingest() -> dict[str, str]:
             "file_hash": file_hash,
             "source_url": info.url,
             "s3_uri": s3_uri,
+            "period": period or "",
         }
 
 
