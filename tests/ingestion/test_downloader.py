@@ -1,6 +1,6 @@
 """Tests for the two-tier dedup in run_raw_ingest.
 
-All BQ/S3/HTTP boundaries are monkeypatched, so these exercise the
+All BQ/GCS/HTTP boundaries are monkeypatched, so these exercise the
 orchestration (which tier fires, what gets logged, whether the 500 MB
 download happens) without touching the network or the warehouse.
 """
@@ -33,7 +33,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(
         dl,
         "get_settings",
-        lambda: type("S", (), {"gcp_project_id": "proj", "aws_s3_bucket": "bucket"})(),
+        lambda: type("S", (), {"gcp_project_id": "proj", "gcs_data_bucket": "bucket"})(),
     )
 
     def fake_download(url: str, dest: Any) -> int:
@@ -44,9 +44,9 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(dl, "stream_download_to_file", fake_download)
     monkeypatch.setattr(dl, "sha256_file", lambda p: calls.get("new_hash", "HASH_NEW"))
     monkeypatch.setattr(
-        dl,
-        "upload_file_to_s3",
-        lambda p, b, k: calls.__setitem__("uploaded", True) or f"s3://{b}/{k}",
+        dl.gcs,
+        "upload_file",
+        lambda p, b, k: calls.__setitem__("uploaded", True) or f"gs://{b}/{k}",
     )
 
     def fake_insert(**kwargs: Any) -> None:
@@ -105,7 +105,7 @@ def test_tier2_ingests_when_generated_at_differs_and_hash_new(
     assert result["status"] == "ingested"
     assert harness["downloaded"] is True
     assert harness["uploaded"] is True
-    assert result["s3_uri"].startswith("s3://bucket/raw/")
+    assert result["gcs_uri"].startswith("gs://bucket/raw/")
     (entry,) = harness["entries"]
     assert entry["status"] == "ingested"
     assert entry["period"] == "202603"

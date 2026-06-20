@@ -27,12 +27,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import boto3
 import polars as pl
 import structlog
 from google.cloud import bigquery
 
 from src.config import get_settings
+from src.storage import gcs
 
 log = structlog.get_logger(__name__)
 
@@ -65,14 +65,11 @@ def read_dim_csv(raw: bytes) -> pl.DataFrame:
 
 
 def _open_zip(zip_source: str) -> tuple[zipfile.ZipFile, Any]:
-    """Open the zip from a local path or an s3:// URI. Returns (zip, cleanup)."""
-    if zip_source.startswith("s3://"):
-        bucket, key = zip_source[len("s3://") :].split("/", 1)
+    """Open the zip from a local path or a gs:// URI. Returns (zip, cleanup)."""
+    if zip_source.startswith("gs://"):
         tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
         tmp.close()
-        log.info("dims.download.start", uri=zip_source)
-        boto3.client("s3").download_file(bucket, key, tmp.name)
-        log.info("dims.download.ok", uri=zip_source)
+        gcs.download_file(zip_source, Path(tmp.name))
         return zipfile.ZipFile(tmp.name), Path(tmp.name)
     return zipfile.ZipFile(zip_source), None
 
@@ -128,7 +125,7 @@ def main() -> int:
     )
     if len(sys.argv) != 2:
         print(
-            "Usage: python -m src.bronze.unzip_dims <s3://bucket/raw/...zip | /local/path.zip>",
+            "Usage: python -m src.bronze.unzip_dims <gs://bucket/raw/...zip | /local/path.zip>",
             file=sys.stderr,
         )
         return 2

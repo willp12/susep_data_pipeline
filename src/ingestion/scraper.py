@@ -33,10 +33,10 @@ from src.config import get_settings
 # defers to the OS trust store (Windows/macOS already trust ICP-Brasil; Linux
 # uses the system CA bundle).
 #
-# We pass this context only to httpx calls that hit SUSEP — doing a global
-# ``truststore.inject_into_ssl()`` breaks boto3 S3 multipart uploads with
-# "maximum recursion depth exceeded" because urllib3's SSL-wrapping path
-# recurses through the patched default SSLContext.
+# We pass this context only to httpx calls that hit SUSEP. A global
+# ``truststore.inject_into_ssl()`` would patch the default SSLContext
+# process-wide — it historically broke boto3 multipart uploads (urllib3 SSL
+# recursion), so we keep it scoped to avoid surprising the GCP SDK clients too.
 SUSEP_SSL_CONTEXT = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 log = structlog.get_logger(__name__)

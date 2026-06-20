@@ -1,4 +1,4 @@
-"""Bronze step: raw zip in S3 → extracted CSV → parquet in S3 bronze/.
+"""Bronze step: raw zip in GCS → extracted CSV → parquet in GCS bronze/.
 
 For the MVP we only extract **one** CSV from the zip — ``ses_seguros.csv`` —
 per the project scope in CLAUDE.md. Other CSVs in the zip are Phase 2.
@@ -16,7 +16,7 @@ polars. Transcoding in Python is ~50-100 MB/s which is fine for a single
 Output key layout (Hive-style, so downstream BQ external tables / dbt can
 partition on it cheaply):
 
-    s3://{bucket}/bronze/ses_seguros/ingestion_date={YYYY-MM-DD}/
+    gs://{bucket}/bronze/ses_seguros/ingestion_date={YYYY-MM-DD}/
         ses_seguros_{YYYYMMDDTHHMMSSZ}.parquet
 
 Two columns added to every row:
@@ -37,11 +37,11 @@ import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-import boto3
 import polars as pl
 import structlog
 
 from src.config import get_settings
+from src.storage import gcs
 
 log = structlog.get_logger(__name__)
 
@@ -51,21 +51,8 @@ TARGET_CSV_NAME = "Ses_seguros.csv"
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
-def _parse_s3_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("s3://"):
-        raise ValueError(f"Not an s3:// URI: {uri}")
-    rest = uri[len("s3://") :]
-    if "/" not in rest:
-        raise ValueError(f"s3:// URI missing key: {uri}")
-    bucket, key = rest.split("/", 1)
-    return bucket, key
-
-
-def _download_raw_zip(s3_uri: str, dest: Path) -> None:
-    bucket, key = _parse_s3_uri(s3_uri)
-    log.info("bronze.download.start", uri=s3_uri, dest=str(dest))
-    boto3.client("s3").download_file(bucket, key, str(dest))
-    log.info("bronze.download.ok", uri=s3_uri, bytes=dest.stat().st_size)
+def _download_raw_zip(gcs_uri: str, dest: Path) -> None:
+    gcs.download_file(gcs_uri, dest)
 
 
 def _extract_target_csv(zip_path: Path, dest_dir: Path, target: str = TARGET_CSV_NAME) -> Path:
@@ -143,15 +130,7 @@ def _build_parquet_key(*, ingestion_date: date, run_ts: datetime) -> str:
     return f"bronze/ses_seguros/ingestion_date={date_part}/ses_seguros_{ts_part}.parquet"
 
 
-def _upload_parquet(local_path: Path, bucket: str, key: str) -> str:
-    uri = f"s3://{bucket}/{key}"
-    log.info("bronze.parquet.upload.start", uri=uri, local=str(local_path))
-    boto3.client("s3").upload_file(str(local_path), bucket, key)
-    log.info("bronze.parquet.upload.ok", uri=uri)
-    return uri
-
-
-def run_bronze_build(raw_s3_uri: str) -> dict[str, str | int]:
+def run_bronze_build(raw_gcs_uri: str) -> dict[str, str | int]:
     """End-to-end bronze build for one raw zip. Returns a summary dict."""
     settings = get_settings()
     run_ts = datetime.now(UTC)
@@ -160,7 +139,7 @@ def run_bronze_build(raw_s3_uri: str) -> dict[str, str | int]:
     with tempfile.TemporaryDirectory(prefix="susep-bronze-") as tmpdir:
         tmp = Path(tmpdir)
         zip_path = tmp / "raw.zip"
-        _download_raw_zip(raw_s3_uri, zip_path)
+        _download_raw_zip(raw_gcs_uri, zip_path)
 
         latin1_csv = _extract_target_csv(zip_path, tmp)
         utf8_csv = tmp / "ses_seguros.utf8.csv"
@@ -184,10 +163,10 @@ def run_bronze_build(raw_s3_uri: str) -> dict[str, str | int]:
         )
 
         key = _build_parquet_key(ingestion_date=ingestion_date, run_ts=run_ts)
-        uri = _upload_parquet(parquet_local, settings.aws_s3_bucket, key)
+        uri = gcs.upload_file(parquet_local, settings.gcs_data_bucket, key)
 
     return {
-        "bronze_s3_uri": uri,
+        "bronze_gcs_uri": uri,
         "rows": df.height,
         "cols": df.width,
         "parquet_bytes": parquet_bytes,
@@ -205,7 +184,7 @@ def main() -> int:
     )
     if len(sys.argv) != 2:
         print(
-            "Usage: python -m src.bronze.unzip_to_parquet s3://bucket/raw/...zip",
+            "Usage: python -m src.bronze.unzip_to_parquet gs://bucket/raw/...zip",
             file=sys.stderr,
         )
         return 2

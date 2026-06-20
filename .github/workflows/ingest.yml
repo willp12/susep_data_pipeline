@@ -9,8 +9,8 @@ name: ingest
 # e-mails the report); a short "new period ingested" notice is e-mailed by the
 # pipeline itself. SUSEP refreshes ~monthly, so weekly catches it within days.
 #
-# Auth is key-based (per decision): GCP via a SA JSON key (GCP_SA_KEY), AWS via
-# access-key secrets — distinct from the read-only insights workflow (WIF).
+# Auth is key-based: GCP via a SA JSON key (GCP_SA_KEY) — single-cloud, so no
+# AWS creds. Distinct from the read-only insights workflow (which uses WIF).
 
 on:
   schedule:
@@ -58,9 +58,6 @@ jobs:
       - name: Run ingestion (scrape → check → ingest → dbt build)
         id: ingest
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
           # SMTP for the "new period ingested" notice (skipped if unset).
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}

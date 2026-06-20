@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 00_preflight.sh — validates AWS/GCP credentials and required env vars.
+# 00_preflight.sh — validates GCP credentials and required env vars.
 # Idempotent: only reads state, never mutates. Safe to re-run.
 set -euo pipefail
 
@@ -24,26 +24,14 @@ set +a
 
 # --- Required env vars -------------------------------------------------------
 : "${GCP_PROJECT_ID:?GCP_PROJECT_ID not set in .env}"
-: "${AWS_S3_BUCKET:?AWS_S3_BUCKET not set in .env}"
-: "${AWS_REGION:?AWS_REGION not set in .env}"
 
 if [[ "${GCP_PROJECT_ID}" == *"<preencher"* ]]; then
   fail "GCP_PROJECT_ID still has placeholder value. Edit .env and set a real project ID."
 fi
 
 # --- Required CLIs -----------------------------------------------------------
-command -v aws    >/dev/null 2>&1 || fail "aws CLI not found on PATH."
 command -v gcloud >/dev/null 2>&1 || fail "gcloud CLI not found on PATH."
 command -v bq     >/dev/null 2>&1 || fail "bq CLI not found on PATH (part of gcloud SDK)."
-
-# --- AWS check ---------------------------------------------------------------
-log "Checking AWS credentials..."
-if ! AWS_ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>&1)"; then
-  err "aws sts get-caller-identity failed:"
-  printf '%s\n' "${AWS_ACCOUNT}" >&2
-  fail "Run 'aws configure' or export AWS credentials."
-fi
-AWS_ARN="$(aws sts get-caller-identity --query Arn --output text)"
 
 # --- GCP check ---------------------------------------------------------------
 log "Checking GCP application-default credentials..."
@@ -62,10 +50,6 @@ cat <<EOF
 ========================================================================
 Preflight summary
 ------------------------------------------------------------------------
-  AWS account       : ${AWS_ACCOUNT}
-  AWS caller ARN    : ${AWS_ARN}
-  AWS region        : ${AWS_REGION}
-  S3 bucket (target): ${AWS_S3_BUCKET}
   GCP project       : ${GCP_PROJECT_ID}
   BQ bronze dataset : ${GCP_BQ_DATASET_BRONZE:-susep_ses_bronze}
   BQ staging dataset: ${GCP_BQ_DATASET_STAGING:-susep_ses_staging}

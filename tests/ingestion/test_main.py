@@ -16,7 +16,7 @@ import src.main as m
 
 def test_run_short_circuits_on_no_change(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        m, "run_raw_ingest", lambda: {"status": "no_change", "period": "202602", "s3_uri": ""}
+        m, "run_raw_ingest", lambda: {"status": "no_change", "period": "202602", "gcs_uri": ""}
     )
     # Downstream steps must NOT run on no_change.
     monkeypatch.setattr(m, "run_bronze_build", lambda uri: pytest.fail("bronze ran"))
@@ -30,10 +30,10 @@ def test_run_full_pipeline_on_ingested(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         m,
         "run_raw_ingest",
-        lambda: {"status": "ingested", "period": "202603", "s3_uri": "s3://b/raw/x.zip"},
+        lambda: {"status": "ingested", "period": "202603", "gcs_uri": "gs://b/raw/x.zip"},
     )
     monkeypatch.setattr(
-        m, "run_bronze_build", lambda uri: calls.append("bronze") or {"bronze_s3_uri": "s3://b/p"}
+        m, "run_bronze_build", lambda uri: calls.append("bronze") or {"bronze_gcs_uri": "gs://b/p"}
     )
     monkeypatch.setattr(m, "run_bronze_load", lambda uri: calls.append("load") or {})
     monkeypatch.setattr(m, "_run_dbt_build", lambda: calls.append("dbt"))
