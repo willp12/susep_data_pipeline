@@ -224,3 +224,12 @@ toolbox.exe
 # Agent reports: the GCS bucket is the source of truth; local files under
 # reports/ are scratch copies of the current run (see src/agent/publisher.py).
 reports/
+
+# Terraform (infra/). Keep .terraform.lock.hcl tracked (it pins providers);
+# never commit state or real tfvars.
+.terraform/
+*.tfstate
+*.tfstate.*
+infra/terraform.tfvars
+crash.log
+crash.*.log
