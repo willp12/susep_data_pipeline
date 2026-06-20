@@ -4,11 +4,17 @@ End-to-end this module owns everything between "what's the current URL?" and
 "there's a row in ingestion_log + (maybe) a zip in s3://…/raw/". The bronze
 parquet transformation is a separate step.
 
-Dedup contract: if the SHA256 of the downloaded zip matches the last
-``status='ingested'`` row for the same file_name, we write a ``'no_change'``
-row and skip the S3 upload entirely. That's the only reason we download before
-checking — SUSEP does not expose a cheap ETag/Last-Modified we could trust, so
-the hash of the bytes we just pulled is the source of truth.
+Dedup contract (two tiers):
+
+  1. Cheap pre-check — the landing page exposes a ``generated_at`` timestamp
+     (and period) without downloading. If it matches our last ingest, the dump
+     is unchanged and we skip the ~500 MB download entirely.
+  2. Authoritative hash — when the timestamp differs or is unknown, we download
+     and compare the SHA256 against the last ``status='ingested'`` row. SUSEP
+     exposes no trustworthy ETag/Last-Modified, so the bytes are the final word
+     (this also catches a same-period regeneration with identical content).
+
+Either tier, on no change, writes a ``'no_change'`` row and skips the S3 upload.
 
 S3 key layout (partitioned by ingestion date, timestamped so repeated
 re-ingests of the same day don't clobber each other):
@@ -42,7 +48,15 @@ import structlog
 from src.config import get_settings
 from src.ingestion.hasher import sha256_file
 from src.ingestion.scraper import SUSEP_SSL_CONTEXT, LatestZipInfo, get_latest_zip_info
-from src.state.ingestion_log import get_latest_hash, insert_entry
+from src.state.ingestion_log import get_latest_ingested_metadata, insert_entry
+
+_UNKNOWN = "unknown"  # scraper's sentinel when the landing-page span is missing
+
+
+def _clean(value: str) -> str | None:
+    """Normalise the scraper's 'unknown' sentinel to None for storage."""
+    return None if value == _UNKNOWN else value
+
 
 log = structlog.get_logger(__name__)
 
@@ -119,6 +133,36 @@ def run_raw_ingest() -> dict[str, str]:
 
     run_ts = datetime.now(UTC)
     info: LatestZipInfo = get_latest_zip_info()
+    previous = get_latest_ingested_metadata(info.filename)
+    period = _clean(info.period)
+    generated_at = _clean(info.generated_at)
+
+    # Tier 1 (cheap): if the landing page reports the same generation timestamp
+    # as our last ingest, the dump hasn't changed — skip the ~500 MB download.
+    # Only trust a known timestamp; "unknown" falls through to the hash check.
+    if previous is not None and generated_at is not None and previous.generated_at == generated_at:
+        log.info(
+            "downloader.no_change.precheck",
+            file=info.filename,
+            generated_at=generated_at,
+            period=period,
+        )
+        insert_entry(
+            file_name=info.filename,
+            file_hash=previous.file_hash,  # carry forward — content is unchanged
+            source_url=info.url,
+            status="no_change",
+            period=period,
+            generated_at=generated_at,
+            run_timestamp=run_ts,
+        )
+        return {
+            "status": "no_change",
+            "file_name": info.filename,
+            "file_hash": previous.file_hash,
+            "source_url": info.url,
+            "s3_uri": "",
+        }
 
     with tempfile.TemporaryDirectory(prefix="susep-raw-") as tmpdir:
         tmp_path = Path(tmpdir) / info.filename
@@ -131,9 +175,10 @@ def run_raw_ingest() -> dict[str, str]:
             sha256_prefix=file_hash[:12],
         )
 
-        previous_hash = get_latest_hash(info.filename)
-
-        if previous_hash == file_hash:
+        # Tier 2 (authoritative): the SUSEP page may regenerate with the same
+        # period but identical bytes, or expose no timestamp — the content hash
+        # is the source of truth.
+        if previous is not None and previous.file_hash == file_hash:
             log.info(
                 "downloader.no_change",
                 file=info.filename,
@@ -144,6 +189,8 @@ def run_raw_ingest() -> dict[str, str]:
                 file_hash=file_hash,
                 source_url=info.url,
                 status="no_change",
+                period=period,
+                generated_at=generated_at,
                 run_timestamp=run_ts,
             )
             return {
@@ -162,6 +209,8 @@ def run_raw_ingest() -> dict[str, str]:
             file_hash=file_hash,
             source_url=info.url,
             status="ingested",
+            period=period,
+            generated_at=generated_at,
             run_timestamp=run_ts,
         )
         return {
