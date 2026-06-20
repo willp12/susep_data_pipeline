@@ -57,55 +57,83 @@ def _ensure_dataset(
     print(f"[bq] Created dataset {client.project}:{dataset_id} (location={location}).")
 
 
+_INGESTION_LOG_SCHEMA = [
+    bigquery.SchemaField(
+        "ingestion_date",
+        "DATE",
+        mode="REQUIRED",
+        description="UTC date the file was ingested (partition key).",
+    ),
+    bigquery.SchemaField(
+        "file_name",
+        "STRING",
+        mode="REQUIRED",
+        description="Source file name (e.g. ses_seguros.csv).",
+    ),
+    bigquery.SchemaField(
+        "file_hash",
+        "STRING",
+        mode="REQUIRED",
+        description="SHA256 of the raw zip.",
+    ),
+    bigquery.SchemaField(
+        "source_url",
+        "STRING",
+        mode="REQUIRED",
+        description="Original download URL scraped from SUSEP.",
+    ),
+    bigquery.SchemaField(
+        "status",
+        "STRING",
+        mode="REQUIRED",
+        description="'ingested' | 'no_change' | 'failed'.",
+    ),
+    bigquery.SchemaField(
+        "run_timestamp",
+        "TIMESTAMP",
+        mode="REQUIRED",
+        description="Pipeline run timestamp.",
+    ),
+    # Added later for the cheap (download-free) new-period pre-check: both come
+    # from the SUSEP landing page. NULLABLE so the column can be added to an
+    # existing table without rewriting rows.
+    bigquery.SchemaField(
+        "period",
+        "STRING",
+        mode="NULLABLE",
+        description="SUSEP reference period (YYYYMM) from the landing page.",
+    ),
+    bigquery.SchemaField(
+        "generated_at",
+        "STRING",
+        mode="NULLABLE",
+        description="SUSEP dump generation timestamp (raw string) from the landing page.",
+    ),
+]
+
+
 def _ensure_ingestion_log(client: bigquery.Client, dataset_id: str) -> None:
     table_id = f"{client.project}.{dataset_id}.ingestion_log"
     try:
-        client.get_table(table_id)
-        print(f"[bq] Table {table_id} already exists — skipping create (never ALTER/DROP here).")
-        return
+        existing = client.get_table(table_id)
     except NotFound:
-        pass
+        existing = None
 
-    schema = [
-        bigquery.SchemaField(
-            "ingestion_date",
-            "DATE",
-            mode="REQUIRED",
-            description="UTC date the file was ingested (partition key).",
-        ),
-        bigquery.SchemaField(
-            "file_name",
-            "STRING",
-            mode="REQUIRED",
-            description="Source file name (e.g. ses_seguros.csv).",
-        ),
-        bigquery.SchemaField(
-            "file_hash",
-            "STRING",
-            mode="REQUIRED",
-            description="SHA256 of the raw zip.",
-        ),
-        bigquery.SchemaField(
-            "source_url",
-            "STRING",
-            mode="REQUIRED",
-            description="Original download URL scraped from SUSEP.",
-        ),
-        bigquery.SchemaField(
-            "status",
-            "STRING",
-            mode="REQUIRED",
-            description="'ingested' | 'no_change' | 'failed'.",
-        ),
-        bigquery.SchemaField(
-            "run_timestamp",
-            "TIMESTAMP",
-            mode="REQUIRED",
-            description="Pipeline run timestamp.",
-        ),
-    ]
+    if existing is not None:
+        # Converge additively: add any missing NULLABLE columns. Never ALTER a
+        # column's type/mode and never DROP — additive evolution only.
+        have = {f.name for f in existing.schema}
+        missing = [f for f in _INGESTION_LOG_SCHEMA if f.name not in have]
+        if not missing:
+            print(f"[bq] Table {table_id} up to date — nothing to do.")
+            return
+        existing.schema = list(existing.schema) + missing
+        client.update_table(existing, ["schema"])
+        added = ", ".join(f.name for f in missing)
+        print(f"[bq] Table {table_id} converged — added nullable column(s): {added}.")
+        return
 
-    table = bigquery.Table(table_id, schema=schema)
+    table = bigquery.Table(table_id, schema=_INGESTION_LOG_SCHEMA)
     table.description = "Ingestion log for susep-ses-pipeline (one row per pipeline run)."
     table.time_partitioning = bigquery.TimePartitioning(
         type_=bigquery.TimePartitioningType.DAY,
