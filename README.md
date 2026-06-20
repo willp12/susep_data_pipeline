@@ -2,7 +2,7 @@
 
 Pipeline de engenharia de dados que ingere estatísticas públicas do
 [SUSEP SES](https://www2.susep.gov.br/menuestatistica/SES/principal.aspx) para
-BigQuery, usando AWS S3 como storage intermediário e dbt para transformações.
+BigQuery, usando GCS como storage intermediário e dbt para transformações.
 
 > **Status:** MVP — Fase 1 (rodada manual, local, um único arquivo end-to-end).
 
@@ -12,7 +12,7 @@ BigQuery, usando AWS S3 como storage intermediário e dbt para transformações.
 - [uv](https://docs.astral.sh/uv/) como package manager
 - httpx + selectolax (scraping)
 - polars (processamento CSV)
-- boto3 + google-cloud-bigquery + google-cloud-storage
+- google-cloud-bigquery + google-cloud-storage (single-cloud: GCP only)
 - dbt-core / dbt-bigquery (>=1.11,<1.12)
 - pydantic v2, structlog
 - ruff, mypy, pre-commit, pytest
@@ -33,7 +33,7 @@ flowchart LR
     end
 
     subgraph ARM["Armazenamento"]
-        S3[("S3 susep-ses-data<br/>raw zip + parquet")]
+        S3[("GCS {project}-susep-ses-data<br/>raw zip + parquet")]
         BRZ[("BigQuery bronze<br/>ses_seguros · dims ·<br/>ingestion_log")]
     end
 
@@ -53,7 +53,7 @@ flowchart LR
 
     SUSEP --> PIPE
     PIPE --> S3
-    S3 -->|"src/loaders"| BRZ
+    S3 -->|"src/loaders (load_table_from_uri)"| BRZ
     BRZ --> STG
     STG --> FCT
 
@@ -86,8 +86,7 @@ Pontos de desenho:
 
 1. **Python 3.12** — o `uv` cuida de instalar caso não esteja presente.
 2. **uv** — instalar conforme [docs oficiais](https://docs.astral.sh/uv/).
-3. **AWS CLI** — `aws --version` deve responder.
-4. **Google Cloud SDK** — `gcloud --version` deve responder.
+3. **Google Cloud SDK** — `gcloud --version` deve responder.
 
 ### Instalação
 
@@ -118,8 +117,8 @@ polars e dbt-bigquery, reportar antes de prosseguir.
 
 ## Primeira execução (bootstrap de infra)
 
-1. Instalar `aws` e `gcloud` CLIs (o `gcloud` também traz o `bq`).
-2. `aws configure` (usa profile default) e `gcloud auth application-default login`.
+1. Instalar o `gcloud` CLI.
+2. `gcloud auth application-default login`.
 3. `gcloud config set project <id-do-projeto-pessoal>`.
 4. Copiar `.env.example` para `.env` e preencher `GCP_PROJECT_ID`.
 5. `make bootstrap` (ou `bash scripts/bootstrap/run_all.sh`).
@@ -129,13 +128,12 @@ configuração viva pro estado desejado em vez de recriar recursos:
 
 | Script                    | O que faz                                                              |
 | ------------------------- | ---------------------------------------------------------------------- |
-| `00_preflight.sh`         | Valida AWS/GCP creds, `.env`, CLIs, e pede confirmação interativa.     |
-| `01_aws_s3.sh`            | Cria bucket `susep-ses-data` (ou converge config se já existir): block public access, versioning, SSE-S3, lifecycle (raw → Glacier IR após 30d; expira noncurrent versions), tags. |
+| `00_preflight.sh`         | Valida GCP creds, `.env`, CLIs, e pede confirmação interativa.        |
 | `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com` (necessária pra impersonação via WIF na CI). |
 | `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. Converge aditivamente (adiciona colunas nullable novas em rerun, ex.: `period`/`generated_at`). **Nunca faz DELETE/DROP nem ALTER destrutivo.** |
 | `04_gcp_gcs_reports.sh`   | Cria o bucket GCS dos reports do agente — `{GCP_PROJECT_ID}-susep-ses-reports` (override via `GCP_REPORTS_BUCKET`): location US, uniform access, versioning, public access prevention. Se `GCP_AGENT_SA` estiver no `.env` (a SA `bq-agent-readonly@...` usada na CI), concede `roles/storage.objectAdmin` no bucket. |
-| `05_gcp_ingest_sa.sh`     | Cria a SA de **escrita** da ingestão (`susep-ingest@...`): `roles/bigquery.jobUser` (projeto) + `WRITER` (dataEditor) nos datasets bronze/staging/marts. Imprime os passos manuais pra gerar a chave JSON (`GCP_SA_KEY`) e os secrets AWS. Idempotente; nunca remove binding. |
-| `run_all.sh`              | Roda `00 → 01 → 02 → 03 → 04 → 05`, para no primeiro erro.              |
+| `05_gcp_ingest_sa.sh`     | Cria a SA de **escrita** da ingestão (`susep-ingest@...`): `roles/bigquery.jobUser` (projeto) + `WRITER` (dataEditor) nos datasets bronze/staging/marts. Imprime os passos pra gerar a chave JSON (`GCP_SA_KEY`). Idempotente; nunca remove binding. _(Sendo migrado pro Terraform — ver `infra/`.)_ |
+| `run_all.sh`              | Roda `00 → 02 → 03 → 04 → 05`, para no primeiro erro.                   |
 
 Para rodar não-interativamente (pular o prompt de confirmação do preflight),
 setar `BOOTSTRAP_ASSUME_YES=1`.
@@ -295,16 +293,16 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
   `cancel-in-progress`).
 - **`ingest.yml`** — `schedule` **semanal** (segundas) + `workflow_dispatch`.
   Autentica no GCP por **chave JSON** (`GCP_SA_KEY`, a SA de escrita
-  `susep-ingest`) e na AWS por access key (secrets), roda `python -m src.main`
+  `susep-ingest`), roda `python -m src.main`
   (scrape → pré-check barato → ingere só se mudou → `dbt build`). Em período
   novo: e-mail de aviso (pelo próprio pipeline) + dispara o `insights.yml`.
-  Um ingest por vez (`concurrency`), pois escreve no S3/BQ e reconstrói os
+  Um ingest por vez (`concurrency`), pois escreve no GCS/BQ e reconstrói os
   marts.
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
 - **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
-  `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY`, `AWS_ACCESS_KEY_ID`,
-  `AWS_SECRET_ACCESS_KEY` (ingestão, escrita), `SMTP_USERNAME`,
-  `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`; variável `GCP_PROJECT_ID`.
+  `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY` (ingestão, escrita),
+  `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`; variável
+  `GCP_PROJECT_ID`.
 
 ### Git workflow
 
@@ -324,7 +322,8 @@ susep-ses-pipeline/
 │   ├── config.py                 # carrega env vars
 │   ├── ingestion/                # scraper, hasher, downloader
 │   ├── bronze/                   # unzip → parquet
-│   ├── loaders/                  # S3 → BigQuery
+│   ├── storage/                  # GCS object I/O (upload/download/parse gs://)
+│   ├── loaders/                  # GCS → BigQuery (load_table_from_uri)
 │   ├── state/                    # ingestion_log
 │   └── agent/                    # agente de insights (tools, glossário, histórico, prompt)
 ├── dbt/

@@ -20,9 +20,10 @@ _ENV_FILE = _REPO_ROOT / ".env"
 
 class Settings(BaseModel):
     env: str = Field(default="dev")
-    aws_s3_bucket: str = Field(default="susep-ses-data")
-    aws_region: str = Field(default="us-east-1")
     gcp_project_id: str = Field(default="")
+    # Raw zips + bronze parquet. Empty when project id is empty; derived
+    # otherwise (single-cloud: replaces the old S3 bucket).
+    gcs_data_bucket: str = Field(default="")
     gcp_bq_dataset_bronze: str = Field(default="susep_ses_bronze")
     gcp_bq_dataset_staging: str = Field(default="susep_ses_staging")
     gcp_bq_dataset_marts: str = Field(default="susep_ses_marts")
@@ -79,12 +80,12 @@ def get_settings() -> Settings:
 
     project_id = os.getenv("GCP_PROJECT_ID", "")
     default_reports_bucket = f"{project_id}-susep-ses-reports" if project_id else ""
+    default_data_bucket = f"{project_id}-susep-ses-data" if project_id else ""
 
     return Settings(
         env=os.getenv("ENV", "dev"),
-        aws_s3_bucket=os.getenv("AWS_S3_BUCKET", "susep-ses-data"),
-        aws_region=os.getenv("AWS_REGION", "us-east-1"),
         gcp_project_id=os.getenv("GCP_PROJECT_ID", ""),
+        gcs_data_bucket=os.getenv("GCS_DATA_BUCKET") or default_data_bucket,
         gcp_bq_dataset_bronze=os.getenv("GCP_BQ_DATASET_BRONZE", "susep_ses_bronze"),
         gcp_bq_dataset_staging=os.getenv("GCP_BQ_DATASET_STAGING", "susep_ses_staging"),
         gcp_bq_dataset_marts=os.getenv("GCP_BQ_DATASET_MARTS", "susep_ses_marts"),

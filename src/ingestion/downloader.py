@@ -1,7 +1,7 @@
-"""Raw-ingest step: scrape → download → hash → dedupe → upload to S3 → log.
+"""Raw-ingest step: scrape → download → hash → dedupe → upload to GCS → log.
 
 End-to-end this module owns everything between "what's the current URL?" and
-"there's a row in ingestion_log + (maybe) a zip in s3://…/raw/". The bronze
+"there's a row in ingestion_log + (maybe) a zip in gs://…/raw/". The bronze
 parquet transformation is a separate step.
 
 Dedup contract (two tiers):
@@ -14,9 +14,9 @@ Dedup contract (two tiers):
      exposes no trustworthy ETag/Last-Modified, so the bytes are the final word
      (this also catches a same-period regeneration with identical content).
 
-Either tier, on no change, writes a ``'no_change'`` row and skips the S3 upload.
+Either tier, on no change, writes a ``'no_change'`` row and skips the upload.
 
-S3 key layout (partitioned by ingestion date, timestamped so repeated
+GCS object layout (partitioned by ingestion date, timestamped so repeated
 re-ingests of the same day don't clobber each other):
 
     raw/{YYYY-MM-DD}/{stem}_{YYYYMMDDTHHMMSSZ}.zip
@@ -41,7 +41,6 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-import boto3
 import httpx
 import structlog
 
@@ -49,6 +48,7 @@ from src.config import get_settings
 from src.ingestion.hasher import sha256_file
 from src.ingestion.scraper import SUSEP_SSL_CONTEXT, LatestZipInfo, get_latest_zip_info
 from src.state.ingestion_log import get_latest_ingested_metadata, insert_entry
+from src.storage import gcs
 
 _UNKNOWN = "unknown"  # scraper's sentinel when the landing-page span is missing
 
@@ -101,22 +101,7 @@ def stream_download_to_file(url: str, dest: Path) -> int:
     return bytes_written
 
 
-def upload_file_to_s3(local_path: Path, bucket: str, key: str) -> str:
-    """Upload ``local_path`` to ``s3://bucket/key``. Returns the s3:// URI.
-
-    ``boto3``'s ``upload_file`` automatically uses a multipart transfer above
-    its threshold (default 8 MiB), which is exactly what we want for a 500 MB
-    zip — no manual chunking needed.
-    """
-    uri = f"s3://{bucket}/{key}"
-    log.info("downloader.s3.upload.start", uri=uri, local=str(local_path))
-    client = boto3.client("s3")
-    client.upload_file(str(local_path), bucket, key)
-    log.info("downloader.s3.upload.ok", uri=uri)
-    return uri
-
-
-def _build_s3_key(filename: str, run_ts: datetime) -> str:
+def _build_raw_key(filename: str, run_ts: datetime) -> str:
     stem = Path(filename).stem or "BaseCompleta"
     date_part = run_ts.strftime("%Y-%m-%d")
     ts_part = run_ts.strftime("%Y%m%dT%H%M%SZ")
@@ -161,7 +146,7 @@ def run_raw_ingest() -> dict[str, str]:
             "file_name": info.filename,
             "file_hash": previous.file_hash,
             "source_url": info.url,
-            "s3_uri": "",
+            "gcs_uri": "",
             "period": period or "",
         }
 
@@ -199,11 +184,12 @@ def run_raw_ingest() -> dict[str, str]:
                 "file_name": info.filename,
                 "file_hash": file_hash,
                 "source_url": info.url,
-                "s3_uri": "",
+                "gcs_uri": "",
+                "period": period or "",
             }
 
-        key = _build_s3_key(info.filename, run_ts)
-        s3_uri = upload_file_to_s3(tmp_path, settings.aws_s3_bucket, key)
+        key = _build_raw_key(info.filename, run_ts)
+        gcs_uri = gcs.upload_file(tmp_path, settings.gcs_data_bucket, key)
 
         insert_entry(
             file_name=info.filename,
@@ -219,7 +205,7 @@ def run_raw_ingest() -> dict[str, str]:
             "file_name": info.filename,
             "file_hash": file_hash,
             "source_url": info.url,
-            "s3_uri": s3_uri,
+            "gcs_uri": gcs_uri,
             "period": period or "",
         }
 

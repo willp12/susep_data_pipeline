@@ -6,7 +6,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SCRIPTS=(
   "00_preflight.sh"
-  "01_aws_s3.sh"
   "02_gcp_apis.sh"
   "03_gcp_bigquery.sh"
   "04_gcp_gcs_reports.sh"
