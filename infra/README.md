@@ -39,7 +39,7 @@ Never let Terraform destroy-and-recreate a stateful resource.
 | ----- | ------ | ------ |
 | 0 | Scaffold: `versions`/`backend`/`providers`/`variables` + state bucket script + docs | ✅ feito |
 | 1 | Import: 3 datasets, 2 SAs, project IAM, dataset WRITER, reports bucket + IAM. `plan` no-op verificado (13 imported, 0 destroyed) | ✅ feito |
-| 1c | Import do WIF (pool/provider + binding) — isolado por ser o mais delicado e compartilhado com o insights | a fazer |
+| 1c | Import do WIF (pool `github-actions-pool` + provider `github-provider` + binding). `plan` no-op (3 imported, 0 changed) | ✅ feito |
 | 2 | Bucket GCS de dados + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`) | a fazer |
 | 3 | (opcional) provider `github` p/ secrets; auth do ingest via WIF (aposenta `GCP_SA_KEY`) | a fazer |
 | 4 | Remove bootstrap `00`–`05`; `make bootstrap` → `terraform apply`; tear down AWS | a fazer |
