@@ -130,7 +130,7 @@ configuração viva pro estado desejado em vez de recriar recursos:
 | `00_preflight.sh`         | Valida AWS/GCP creds, `.env`, CLIs, e pede confirmação interativa.     |
 | `01_aws_s3.sh`            | Cria bucket `susep-ses-data` (ou converge config se já existir): block public access, versioning, SSE-S3, lifecycle (raw → Glacier IR após 30d; expira noncurrent versions), tags. |
 | `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com` (necessária pra impersonação via WIF na CI). |
-| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. **Nunca faz DELETE/DROP.** |
+| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. Converge aditivamente (adiciona colunas nullable novas em rerun, ex.: `period`/`generated_at`). **Nunca faz DELETE/DROP nem ALTER destrutivo.** |
 | `04_gcp_gcs_reports.sh`   | Cria o bucket GCS dos reports do agente — `{GCP_PROJECT_ID}-susep-ses-reports` (override via `GCP_REPORTS_BUCKET`): location US, uniform access, versioning, public access prevention. Se `GCP_AGENT_SA` estiver no `.env` (a SA `bq-agent-readonly@...` usada na CI), concede `roles/storage.objectAdmin` no bucket. |
 | `run_all.sh`              | Roda `00 → 01 → 02 → 03 → 04`, para no primeiro erro.                   |
 
