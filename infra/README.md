@@ -1,0 +1,60 @@
+# infra/ — Terraform
+
+Infrastructure as code for the SUSEP SES pipeline (GCP). This replaces the
+imperative `scripts/bootstrap/*.sh` over a staged migration — see the
+[roadmap](#roadmap) below. **Etapa 0 (this PR) is scaffold only**: backend,
+provider, variables and docs. No resources are declared yet, so `plan` shows
+nothing to do — Etapa 1 adopts the live infra via `import {}` blocks.
+
+## First-time setup
+
+```bash
+# 1) One-time: create the remote-state bucket (out-of-band — see backend.tf).
+bash infra/scripts/create-state-bucket.sh
+
+# 2) Auth (Application Default Credentials) and init the backend.
+gcloud auth application-default login        # if not already
+cd infra
+cp terraform.tfvars.example terraform.tfvars # adjust if needed
+terraform init                               # connects to the gcs backend
+terraform plan                               # Etapa 0: "No changes."
+```
+
+## Auth model
+
+ADC everywhere — no credentials in these files. Locally: your gcloud ADC. In
+CI: the `GCP_SA_KEY` service-account key (Etapa 3 may move this to WIF).
+
+## Critical rule — import, never recreate
+
+The infra already exists and holds data (BigQuery tables with ~1.8M rows, the
+reports bucket with backfilled reports). Etapa 1 onward MUST adopt resources
+with `import {}` blocks and confirm a **no-op `plan`** before any `apply`.
+Never let Terraform destroy-and-recreate a stateful resource.
+
+## Roadmap
+
+| Etapa | Escopo | Estado |
+| ----- | ------ | ------ |
+| 0 | Scaffold: `versions`/`backend`/`providers`/`variables` + state bucket script + docs | **este PR** |
+| 1 | Import da infra GCP existente (datasets + `ingestion_log`, bucket de reports, 2 SAs + bindings, WIF). Meta: `plan` no-op | a fazer |
+| 2 | Bucket GCS de dados + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`) | a fazer |
+| 3 | (opcional) provider `github` p/ secrets; auth do ingest via WIF (aposenta `GCP_SA_KEY`) | a fazer |
+| 4 | Remove bootstrap `00`–`05`; `make bootstrap` → `terraform apply`; tear down AWS | a fazer |
+| 5 | (opcional) `terraform plan` em PR (CI), workspaces dev/prod, drift detection | a fazer |
+
+## Layout
+
+```
+infra/
+├── versions.tf      # terraform >=1.5 (import blocks) + google ~>6.0
+├── backend.tf       # gcs backend (bucket {project}-tf-state, prefix susep/)
+├── providers.tf     # google provider (ADC auth)
+├── variables.tf     # inputs; defaults mirror current infra
+├── terraform.tfvars.example
+├── bigquery.tf      # datasets + ingestion_log   (Etapa 1)
+├── storage.tf       # reports bucket (E1) + data bucket (E2)
+├── iam.tf           # service accounts + bindings (Etapa 1)
+├── wif.tf           # workload identity federation (Etapa 1)
+└── scripts/create-state-bucket.sh
+```
