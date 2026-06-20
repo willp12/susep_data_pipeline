@@ -91,6 +91,44 @@ def test_send_report_sends_via_smtp_ssl(monkeypatch: pytest.MonkeyPatch) -> None
     assert sent["to"] == "will@example.com"
 
 
+def test_send_ingest_notification_builds_and_sends(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: dict[str, object] = {}
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int = 0) -> None:
+            pass
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def login(self, user: str, password: str) -> None:
+            pass
+
+        def send_message(self, msg: EmailMessage) -> None:
+            sent["subject"] = msg["Subject"]
+            sent["to"] = msg["To"]
+            sent["body"] = msg.get_content()
+
+    monkeypatch.setattr(emailer, "get_settings", lambda: _settings())
+    monkeypatch.setattr(emailer.smtplib, "SMTP_SSL", FakeSMTP)
+
+    status = emailer.send_ingest_notification(period="202603")
+    assert status == "sent"
+    assert "202603" in str(sent["subject"])
+    assert sent["to"] == "will@example.com"
+    assert "202603" in str(sent["body"])
+
+
+def test_send_ingest_notification_skips_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(emailer, "get_settings", lambda: _settings(report_email_to=""))
+    assert emailer.send_ingest_notification(period="202603") == "skipped"
+
+
 def test_send_report_failure_is_contained(monkeypatch: pytest.MonkeyPatch) -> None:
     class BoomSMTP:
         def __init__(self, *args: object, **kwargs: object) -> None:
