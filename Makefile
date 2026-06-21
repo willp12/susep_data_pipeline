@@ -28,6 +28,8 @@ chat-ui:
 dbt-build:
 	cd dbt && uv run dbt build --profiles-dir .
 
+# Residual bootstrap (APIs + ingestion_log table). The infra proper is
+# Terraform: cd infra && terraform apply.
 bootstrap:
 	bash scripts/bootstrap/run_all.sh
 
