@@ -42,7 +42,7 @@ Never let Terraform destroy-and-recreate a stateful resource.
 | 1c | Import do WIF (pool `github-actions-pool` + provider `github-provider` + binding). `plan` no-op (3 imported, 0 changed) | ✅ feito |
 | 2 | Bucket GCS de dados (TF) + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`). Código pronto; `apply` do bucket após merge | em revisão |
 | 3 | (opcional) provider `github` p/ secrets; auth do ingest via WIF (aposenta `GCP_SA_KEY`) | a fazer |
-| 4 | Remove bootstrap `00`–`05`; `make bootstrap` → `terraform apply`; tear down AWS | a fazer |
+| 4 | Remove bootstrap obsoletos (`04`/`05` → TF); infra = `terraform apply`; secrets AWS removidos. Bucket S3 mantido (arquivo) — deletar quando quiser | parcial |
 | 5 | (opcional) `terraform plan` em PR (CI), workspaces dev/prod, drift detection | a fazer |
 
 ## Layout
