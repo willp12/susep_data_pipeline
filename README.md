@@ -115,28 +115,32 @@ uv run python -c "import polars; print(polars.__version__)"
 Ambos devem rodar sem erro. Se houver conflito de `pyarrow`/`protobuf` entre
 polars e dbt-bigquery, reportar antes de prosseguir.
 
-## Primeira execução (bootstrap de infra)
+## Primeira execução (infra)
 
-1. Instalar o `gcloud` CLI.
-2. `gcloud auth application-default login`.
-3. `gcloud config set project <id-do-projeto-pessoal>`.
-4. Copiar `.env.example` para `.env` e preencher `GCP_PROJECT_ID`.
-5. `make bootstrap` (ou `bash scripts/bootstrap/run_all.sh`).
+A infra é **Terraform** (`infra/`) — datasets, buckets, service accounts, IAM e
+WIF. Ver [`infra/README.md`](infra/README.md):
 
-Os scripts são **idempotentes** — podem ser re-rodados sem erro; convergem a
-configuração viva pro estado desejado em vez de recriar recursos:
+```bash
+bash infra/scripts/create-state-bucket.sh   # uma vez (bucket de state)
+cd infra && terraform init && terraform apply
+```
+
+Um **bootstrap residual** cobre só o que o Terraform não gerencia (preflight,
+habilitar APIs, e a tabela `ingestion_log` — cujo schema evolui com o código):
+
+1. `gcloud auth application-default login` + `.env` com `GCP_PROJECT_ID`.
+2. `make bootstrap` (ou `bash scripts/bootstrap/run_all.sh`).
 
 | Script                    | O que faz                                                              |
 | ------------------------- | ---------------------------------------------------------------------- |
 | `00_preflight.sh`         | Valida GCP creds, `.env`, CLIs, e pede confirmação interativa.        |
-| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com` (necessária pra impersonação via WIF na CI). |
-| `03_gcp_bigquery.sh`      | Cria datasets `susep_ses_bronze`, `susep_ses_staging` e `susep_ses_marts` (location US) + tabela `ingestion_log` particionada por `ingestion_date`, clusterizada por `file_name`. Converge aditivamente (adiciona colunas nullable novas em rerun, ex.: `period`/`generated_at`). **Nunca faz DELETE/DROP nem ALTER destrutivo.** |
-| `04_gcp_gcs_reports.sh`   | Cria o bucket GCS dos reports do agente — `{GCP_PROJECT_ID}-susep-ses-reports` (override via `GCP_REPORTS_BUCKET`): location US, uniform access, versioning, public access prevention. Se `GCP_AGENT_SA` estiver no `.env` (a SA `bq-agent-readonly@...` usada na CI), concede `roles/storage.objectAdmin` no bucket. |
-| `05_gcp_ingest_sa.sh`     | Cria a SA de **escrita** da ingestão (`susep-ingest@...`): `roles/bigquery.jobUser` (projeto) + `WRITER` (dataEditor) nos datasets bronze/staging/marts. Imprime os passos pra gerar a chave JSON (`GCP_SA_KEY`). Idempotente; nunca remove binding. _(Sendo migrado pro Terraform — ver `infra/`.)_ |
-| `run_all.sh`              | Roda `00 → 02 → 03 → 04 → 05`, para no primeiro erro.                   |
+| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com`. |
+| `03_gcp_bigquery.sh`      | Garante a tabela `ingestion_log` (particionada por `ingestion_date`, clusterizada por `file_name`; converge colunas nullable novas como `period`/`generated_at`). Os datasets são do Terraform. **Nunca faz DELETE/DROP.** |
+| `run_all.sh`              | Roda `00 → 02 → 03`, para no primeiro erro.                            |
 
-Para rodar não-interativamente (pular o prompt de confirmação do preflight),
-setar `BOOTSTRAP_ASSUME_YES=1`.
+Os buckets de reports/dados, as SAs (`bq-agent-readonly`, `susep-ingest`) + IAM
+e o WIF migraram pro Terraform (antigos `04`/`05` removidos). Para rodar
+não-interativamente, setar `BOOTSTRAP_ASSUME_YES=1`.
 
 ## Desenvolvimento
 
