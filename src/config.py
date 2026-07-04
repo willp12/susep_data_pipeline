@@ -55,11 +55,10 @@ class Settings(BaseModel):
     # Optional CSV whitelist of outlets (e.g. specialised insurance press).
     news_include_domains: str = Field(default="")
 
-    # Report e-mail delivery (optional — leaving these empty disables sending).
-    smtp_host: str = Field(default="smtp.gmail.com")
-    smtp_port: int = Field(default=465)
-    smtp_username: str = Field(default="")
-    smtp_app_password: str = Field(default="")
+    # Report e-mail delivery via Brevo (optional — leaving any empty disables
+    # sending). The sender must be a Brevo-verified address. The API key is
+    # read but never logged.
+    brevo_api_key: str = Field(default="")
     report_email_to: str = Field(default="")
     report_email_from: str = Field(default="")
 
@@ -105,10 +104,7 @@ def get_settings() -> Settings:
         tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
         news_max_searches=int(os.getenv("NEWS_MAX_SEARCHES", "5")),
         news_include_domains=os.getenv("NEWS_INCLUDE_DOMAINS", ""),
-        smtp_host=os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        smtp_port=int(os.getenv("SMTP_PORT", "465")),
-        smtp_username=os.getenv("SMTP_USERNAME", ""),
-        smtp_app_password=os.getenv("SMTP_APP_PASSWORD", ""),
+        brevo_api_key=os.getenv("BREVO_API_KEY", ""),
         report_email_to=os.getenv("REPORT_EMAIL_TO", ""),
         report_email_from=os.getenv("REPORT_EMAIL_FROM", ""),
     )
