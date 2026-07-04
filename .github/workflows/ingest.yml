@@ -58,10 +58,10 @@ jobs:
       - name: Run ingestion (scrape → check → ingest → dbt build)
         id: ingest
         env:
-          # SMTP for the "new period ingested" notice (skipped if unset).
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          # Brevo e-mail for the "new period ingested" notice (skipped if unset).
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
+          REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
         run: uv run python -m src.main
 
       - name: Trigger the insights report on a new period

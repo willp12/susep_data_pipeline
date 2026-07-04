@@ -45,7 +45,7 @@ flowchart LR
     subgraph SRV["Serving — analytics"]
         RUN["Agente de insights<br/>diário, GitHub Actions<br/>(WIF + SA read-only)"]
         GCS[("GCS reports bucket<br/>reports · queries · logs ·<br/>manifest.json")]
-        MAIL["E-mail<br/>(Gmail SMTP)"]
+        MAIL["E-mail<br/>(Brevo API)"]
         CHAT["Chat analítico<br/>local, multi-turn<br/>(make chat)"]
     end
 
@@ -209,12 +209,14 @@ uv run python scripts/backfill_reports_to_gcs.py   # idempotente
 
 ### Entrega por e-mail
 
-Depois de publicar no GCS, o run envia o report por e-mail (Gmail SMTP com app
-password): corpo HTML renderizado da análise + os `.md` (report e apêndice de
-queries) anexados. Configuração via env — `SMTP_USERNAME`, `SMTP_APP_PASSWORD`
-(gerar em <https://myaccount.google.com/apppasswords>, requer 2FA) e
-`REPORT_EMAIL_TO`. Se faltar qualquer um, o envio é **pulado** com warning; o
-envio é best-effort e nunca falha o run (o report já está publicado).
+Depois de publicar no GCS, o run envia o report por e-mail via a API
+transacional do [Brevo](https://www.brevo.com): corpo HTML renderizado da
+análise + os `.md` (report e apêndice de queries) anexados. Configuração via
+env — `BREVO_API_KEY` (Brevo > SMTP & API > API keys), `REPORT_EMAIL_FROM`
+(remetente **verificado** no Brevo, em Senders & IPs) e `REPORT_EMAIL_TO`
+(aceita lista separada por vírgula). Se faltar qualquer um, o envio é
+**pulado** com warning; o envio é best-effort e nunca falha o run (o report já
+está publicado).
 
 ### Rodar localmente
 
@@ -301,7 +303,7 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
 - **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
   `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY` (ingestão, escrita),
-  `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `REPORT_EMAIL_TO`; variável
+  `BREVO_API_KEY`, `REPORT_EMAIL_FROM`, `REPORT_EMAIL_TO`; variável
   `GCP_PROJECT_ID`.
 
 ### Git workflow

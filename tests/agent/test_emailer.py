@@ -1,5 +1,7 @@
-from email.message import EmailMessage
+import base64
+from typing import Any
 
+import httpx
 import pytest
 
 import src.agent.emailer as emailer
@@ -13,8 +15,8 @@ def test_render_html_converts_markdown() -> None:
     assert "Insights SUSEP SES — 2026-06-09" in html
 
 
-def test_build_message_has_parts_and_attachments() -> None:
-    msg = emailer.build_message(
+def test_build_payload_has_parts_and_attachments() -> None:
+    payload = emailer.build_payload(
         stem="2026-06-09",
         body="## Sumário\ntexto",
         report_text="--- fm ---\ncorpo",
@@ -22,16 +24,19 @@ def test_build_message_has_parts_and_attachments() -> None:
         sender="bot@example.com",
         to="will@example.com",
     )
-    assert msg["Subject"] == "Insights SUSEP SES — 2026-06-09"
-    assert msg["To"] == "will@example.com"
-    attachments = [part.get_filename() for part in msg.iter_attachments()]
-    assert attachments == ["2026-06-09.md", "2026-06-09.sql.md"]
-    html = msg.get_body(preferencelist=("html",))
-    assert html is not None
+    assert payload["subject"] == "Insights SUSEP SES — 2026-06-09"
+    assert payload["sender"] == {"email": "bot@example.com", "name": "SUSEP Insights"}
+    assert payload["to"] == [{"email": "will@example.com"}]
+    assert "<h2>Sumário</h2>" in payload["htmlContent"]
+    assert payload["textContent"] == "## Sumário\ntexto"
+    names = [att["name"] for att in payload["attachment"]]
+    assert names == ["2026-06-09.md", "2026-06-09.sql.md"]
+    decoded = base64.b64decode(payload["attachment"][0]["content"]).decode("utf-8")
+    assert decoded == "--- fm ---\ncorpo"
 
 
-def test_build_message_without_queries_attachment() -> None:
-    msg = emailer.build_message(
+def test_build_payload_without_queries_attachment() -> None:
+    payload = emailer.build_payload(
         stem="2026-06-09",
         body="x",
         report_text="x",
@@ -39,87 +44,94 @@ def test_build_message_without_queries_attachment() -> None:
         sender="bot@example.com",
         to="will@example.com",
     )
-    attachments = [part.get_filename() for part in msg.iter_attachments()]
-    assert attachments == ["2026-06-09.md"]
+    names = [att["name"] for att in payload["attachment"]]
+    assert names == ["2026-06-09.md"]
+
+
+def test_recipients_supports_comma_separated_list() -> None:
+    payload = emailer.build_payload(
+        stem="2026-06-09",
+        body="x",
+        report_text="x",
+        queries_text=None,
+        sender="bot@example.com",
+        to="a@x.com, b@y.com",
+    )
+    assert payload["to"] == [{"email": "a@x.com"}, {"email": "b@y.com"}]
 
 
 def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
-        "smtp_username": "bot@gmail.com",
-        "smtp_app_password": "secret",
+        "brevo_api_key": "key",
         "report_email_to": "will@example.com",
+        "report_email_from": "bot@example.com",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
 
 
+class _FakePost:
+    """Captures the httpx.post call and returns a canned response."""
+
+    def __init__(self, response: httpx.Response | None = None) -> None:
+        self.response = response or httpx.Response(201, json={"messageId": "1"})
+        self.url: str | None = None
+        self.json: dict[str, Any] | None = None
+        self.headers: dict[str, str] | None = None
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        headers: dict[str, str],
+        timeout: float,
+    ) -> httpx.Response:
+        self.url = url
+        self.json = json
+        self.headers = headers
+        return self.response
+
+
 def test_send_report_skips_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(emailer, "get_settings", lambda: _settings(smtp_app_password=""))
+    monkeypatch.setattr(emailer, "get_settings", lambda: _settings(brevo_api_key=""))
     status = emailer.send_report(stem="2026-06-09", body="x", report_text="x", queries_text=None)
     assert status == "skipped"
 
 
-def test_send_report_sends_via_smtp_ssl(monkeypatch: pytest.MonkeyPatch) -> None:
-    sent: dict[str, object] = {}
+def test_send_report_skips_without_sender(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(emailer, "get_settings", lambda: _settings(report_email_from=""))
+    status = emailer.send_report(stem="2026-06-09", body="x", report_text="x", queries_text=None)
+    assert status == "skipped"
 
-    class FakeSMTP:
-        def __init__(self, host: str, port: int, timeout: int = 0) -> None:
-            sent["host"] = host
-            sent["port"] = port
 
-        def __enter__(self) -> "FakeSMTP":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def login(self, user: str, password: str) -> None:
-            sent["login"] = (user, password)
-
-        def send_message(self, msg: EmailMessage) -> None:
-            sent["subject"] = msg["Subject"]
-            sent["to"] = msg["To"]
-
+def test_send_report_posts_to_brevo(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakePost()
     monkeypatch.setattr(emailer, "get_settings", lambda: _settings())
-    monkeypatch.setattr(emailer.smtplib, "SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr(emailer.httpx, "post", fake)
 
     status = emailer.send_report(stem="2026-06-09", body="x", report_text="x", queries_text="q")
     assert status == "sent"
-    assert sent["host"] == "smtp.gmail.com"
-    assert sent["port"] == 465
-    assert sent["login"] == ("bot@gmail.com", "secret")
-    assert sent["to"] == "will@example.com"
+    assert fake.url == emailer._BREVO_URL
+    assert fake.headers is not None and fake.headers["api-key"] == "key"
+    assert fake.json is not None
+    assert fake.json["sender"]["email"] == "bot@example.com"
+    assert fake.json["to"] == [{"email": "will@example.com"}]
+    assert fake.json["subject"] == "Insights SUSEP SES — 2026-06-09"
 
 
 def test_send_ingest_notification_builds_and_sends(monkeypatch: pytest.MonkeyPatch) -> None:
-    sent: dict[str, object] = {}
-
-    class FakeSMTP:
-        def __init__(self, host: str, port: int, timeout: int = 0) -> None:
-            pass
-
-        def __enter__(self) -> "FakeSMTP":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def login(self, user: str, password: str) -> None:
-            pass
-
-        def send_message(self, msg: EmailMessage) -> None:
-            sent["subject"] = msg["Subject"]
-            sent["to"] = msg["To"]
-            sent["body"] = msg.get_content()
-
+    fake = _FakePost()
     monkeypatch.setattr(emailer, "get_settings", lambda: _settings())
-    monkeypatch.setattr(emailer.smtplib, "SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr(emailer.httpx, "post", fake)
 
     status = emailer.send_ingest_notification(period="202603")
     assert status == "sent"
-    assert "202603" in str(sent["subject"])
-    assert sent["to"] == "will@example.com"
-    assert "202603" in str(sent["body"])
+    assert fake.json is not None
+    assert "202603" in fake.json["subject"]
+    assert fake.json["to"] == [{"email": "will@example.com"}]
+    assert "202603" in fake.json["textContent"]
+    assert "attachment" not in fake.json
 
 
 def test_send_ingest_notification_skips_when_unconfigured(
@@ -130,12 +142,20 @@ def test_send_ingest_notification_skips_when_unconfigured(
 
 
 def test_send_report_failure_is_contained(monkeypatch: pytest.MonkeyPatch) -> None:
-    class BoomSMTP:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            raise OSError("connection refused")
+    def boom(*args: object, **kwargs: object) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(emailer, "get_settings", lambda: _settings())
-    monkeypatch.setattr(emailer.smtplib, "SMTP_SSL", BoomSMTP)
+    monkeypatch.setattr(emailer.httpx, "post", boom)
+
+    status = emailer.send_report(stem="2026-06-09", body="x", report_text="x", queries_text=None)
+    assert status == "failed"
+
+
+def test_send_report_non_2xx_is_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakePost(response=httpx.Response(401, text='{"code":"unauthorized"}'))
+    monkeypatch.setattr(emailer, "get_settings", lambda: _settings())
+    monkeypatch.setattr(emailer.httpx, "post", fake)
 
     status = emailer.send_report(stem="2026-06-09", body="x", report_text="x", queries_text=None)
     assert status == "failed"

@@ -1,4 +1,4 @@
-"""E-mail delivery of the daily report (Gmail SMTP + app password).
+"""E-mail delivery of the daily report (Brevo transactional API).
 
 The e-mail is the human review channel now that reports go straight to GCS
 instead of a PR: HTML body rendered from the analysis markdown, with the raw
@@ -6,24 +6,27 @@ instead of a PR: HTML body rendered from the analysis markdown, with the raw
 
 Delivery is best-effort by design: the report is already published when we get
 here, so a failed/unconfigured send logs loudly but never fails the run.
-Configure via env (see .env.example): SMTP_USERNAME + SMTP_APP_PASSWORD +
-REPORT_EMAIL_TO. With Gmail, the app password requires 2FA on the account.
+Configure via env (see .env.example): BREVO_API_KEY + REPORT_EMAIL_TO +
+REPORT_EMAIL_FROM. The sender address must be verified in Brevo.
 """
 
 from __future__ import annotations
 
-import smtplib
-from email.message import EmailMessage
+import base64
+from typing import Any
 
+import httpx
 import structlog
 
 from src.config import Settings, get_settings
 
 log = structlog.get_logger(__name__)
 
+_BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+
 
 def is_configured(settings: Settings) -> bool:
-    return bool(settings.smtp_username and settings.smtp_app_password and settings.report_email_to)
+    return bool(settings.brevo_api_key and settings.report_email_to and settings.report_email_from)
 
 
 def render_html(body: str, stem: str) -> str:
@@ -39,7 +42,16 @@ def render_html(body: str, stem: str) -> str:
     )
 
 
-def build_message(
+def _recipients(to: str) -> list[dict[str, str]]:
+    # REPORT_EMAIL_TO accepts a comma-separated list of addresses.
+    return [{"email": addr.strip()} for addr in to.split(",") if addr.strip()]
+
+
+def _attachment(name: str, text: str) -> dict[str, str]:
+    return {"name": name, "content": base64.b64encode(text.encode("utf-8")).decode("ascii")}
+
+
+def build_payload(
     *,
     stem: str,
     body: str,
@@ -47,28 +59,19 @@ def build_message(
     queries_text: str | None,
     sender: str,
     to: str,
-) -> EmailMessage:
-    msg = EmailMessage()
-    msg["Subject"] = f"Insights SUSEP SES — {stem}"
-    msg["From"] = sender
-    msg["To"] = to
-    # Plain-text fallback is the raw markdown; the HTML part is preferred.
-    msg.set_content(body)
-    msg.add_alternative(render_html(body, stem), subtype="html")
-    msg.add_attachment(
-        report_text.encode("utf-8"),
-        maintype="text",
-        subtype="markdown",
-        filename=f"{stem}.md",
-    )
+) -> dict[str, Any]:
+    attachments = [_attachment(f"{stem}.md", report_text)]
     if queries_text:
-        msg.add_attachment(
-            queries_text.encode("utf-8"),
-            maintype="text",
-            subtype="markdown",
-            filename=f"{stem}.sql.md",
-        )
-    return msg
+        attachments.append(_attachment(f"{stem}.sql.md", queries_text))
+    return {
+        "sender": {"email": sender, "name": "SUSEP Insights"},
+        "to": _recipients(to),
+        "subject": f"Insights SUSEP SES — {stem}",
+        "htmlContent": render_html(body, stem),
+        # Plain-text fallback is the raw markdown; the HTML part is preferred.
+        "textContent": body,
+        "attachment": attachments,
+    }
 
 
 def send_report(
@@ -83,37 +86,50 @@ def send_report(
     if not is_configured(settings):
         log.warning(
             "agent.email.skipped",
-            reason="SMTP_USERNAME / SMTP_APP_PASSWORD / REPORT_EMAIL_TO not all set",
+            reason="BREVO_API_KEY / REPORT_EMAIL_TO / REPORT_EMAIL_FROM not all set",
         )
         return "skipped"
 
-    sender = settings.report_email_from or settings.smtp_username
-    msg = build_message(
+    payload = build_payload(
         stem=stem,
         body=body,
         report_text=report_text,
         queries_text=queries_text,
-        sender=sender,
+        sender=settings.report_email_from,
         to=settings.report_email_to,
     )
-    return _deliver(msg, settings)
+    return _deliver(payload, settings)
 
 
-def _deliver(msg: EmailMessage, settings: Settings) -> str:
-    """Send a prepared message via SMTP SSL. Returns 'sent' or 'failed'.
+def _deliver(payload: dict[str, Any], settings: Settings) -> str:
+    """POST a prepared payload to the Brevo API. Returns 'sent' or 'failed'.
 
     Best-effort by design: a delivery failure logs loudly but never raises —
     callers treat e-mail as a notification, not a critical path.
     """
     try:
-        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
-            smtp.login(settings.smtp_username, settings.smtp_app_password)
-            smtp.send_message(msg)
+        resp = httpx.post(
+            _BREVO_URL,
+            json=payload,
+            headers={"api-key": settings.brevo_api_key, "accept": "application/json"},
+            timeout=30.0,
+        )
     except Exception as exc:
-        log.error("agent.email.failed", error=str(exc), subject=msg["Subject"])
+        log.error("agent.email.failed", error=str(exc), subject=payload["subject"])
         return "failed"
 
-    log.info("agent.email.sent", to=msg["To"], subject=msg["Subject"])
+    # Brevo answers 201 (sent) / 202 (scheduled). Log only the status and a
+    # body snippet — never the request headers, which carry the API key.
+    if not resp.is_success:
+        log.error(
+            "agent.email.failed",
+            status=resp.status_code,
+            body=resp.text[:300],
+            subject=payload["subject"],
+        )
+        return "failed"
+
+    log.info("agent.email.sent", to=payload["to"], subject=payload["subject"])
     return "sent"
 
 
@@ -121,21 +137,23 @@ def send_ingest_notification(*, period: str) -> str:
     """E-mail a short 'new period ingested' notice. Returns sent/skipped/failed.
 
     Sent by the ingestion pipeline when a new SUSEP dump goes through; skipped
-    when SMTP isn't configured (e.g. local runs), so it's safe to call always.
+    when e-mail isn't configured (e.g. local runs), so it's safe to call always.
     """
     settings = get_settings()
     if not is_configured(settings):
-        log.warning("agent.email.skipped", reason="SMTP not configured")
+        log.warning("agent.email.skipped", reason="e-mail not configured")
         return "skipped"
 
     label = period or "novo período"
-    msg = EmailMessage()
-    msg["Subject"] = f"SUSEP SES — novo período ingerido ({label})"
-    msg["From"] = settings.report_email_from or settings.smtp_username
-    msg["To"] = settings.report_email_to
-    msg.set_content(
-        f"A ingestão detectou e carregou um novo período da base SUSEP SES: {label}.\n\n"
-        "Os marts foram reconstruídos (dbt build) e o relatório de insights será "
-        "gerado em seguida."
-    )
-    return _deliver(msg, settings)
+    # No "attachment" key on purpose: Brevo rejects an empty array.
+    payload: dict[str, Any] = {
+        "sender": {"email": settings.report_email_from, "name": "SUSEP Insights"},
+        "to": _recipients(settings.report_email_to),
+        "subject": f"SUSEP SES — novo período ingerido ({label})",
+        "textContent": (
+            f"A ingestão detectou e carregou um novo período da base SUSEP SES: {label}.\n\n"
+            "Os marts foram reconstruídos (dbt build) e o relatório de insights será "
+            "gerado em seguida."
+        ),
+    }
+    return _deliver(payload, settings)
