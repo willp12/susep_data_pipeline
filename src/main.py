@@ -129,7 +129,7 @@ def main() -> int:
     _emit_github_output(outcome)
     print(f"[main] status={outcome['status']} period={outcome['period']}")
 
-    # A new period just landed: notify by e-mail (skipped when SMTP isn't
+    # A new period just landed: notify by e-mail (skipped when e-mail isn't
     # configured, e.g. local runs). Triggering the insights report is the
     # workflow's job — it needs the Actions API, which main.py shouldn't touch.
     if outcome["status"] == "ingested":
