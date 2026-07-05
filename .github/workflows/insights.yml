@@ -1,8 +1,13 @@
 name: insights
 
-# Daily SUSEP SES insights agent. Reads BigQuery (read-only SA via WIF),
+# Weekly SUSEP SES insights agent. Reads BigQuery (read-only SA via WIF),
 # publishes the report + SQL appendix + run log to the GCS reports bucket
 # and e-mails the report for human review. Nothing is committed to the repo.
+#
+# Weekly (not daily) on purpose: the SUSEP dump refreshes ~monthly, so a daily
+# report mostly re-analyzed unchanged marts. Scheduled ~2h after the Monday
+# ingest so a fresh period (when there is one) is already in the marts; on a
+# new period the ingest workflow also dispatches this one directly.
 #
 # Decoupled from the ingestion pipeline on purpose: it assumes the marts
 # (susep_ses_marts.fct_seguros) are already built. Test via "Run workflow"
@@ -10,7 +15,7 @@ name: insights
 
 on:
   schedule:
-    - cron: "0 12 * * *" # 12:00 UTC ≈ 09:00 BRT
+    - cron: "0 14 * * 1" # Mondays 14:00 UTC ≈ 11:00 BRT (~2h after ingest.yml)
   workflow_dispatch:
 
 permissions:
@@ -73,6 +78,12 @@ jobs:
       - name: Run insights agent (publishes to GCS + e-mails the report)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Weekly cadence buys a stronger model: Opus (~1.67x Sonnet pricing,
+          # ~US$1/run) at ~4 runs/month is ~4x cheaper than daily Sonnet was.
+          # CI-only override — the local default stays sonnet/0.75 for cheap
+          # test runs (see src/config.py).
+          AGENT_MODEL: opus
+          AGENT_MAX_BUDGET_USD: "1.25"
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           REPORT_EMAIL_TO: ${{ secrets.REPORT_EMAIL_TO }}
           REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
