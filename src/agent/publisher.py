@@ -33,6 +33,10 @@ MANIFEST_PATH = "manifest.json"
 
 _TITLE_RE = re.compile(r"^###\s+(.+)$", re.MULTILINE)
 
+# The report body declares its mode in the executive summary, e.g.
+# "Modo: deep-dive" or "**Modo: novo ângulo.**" (formatting varies by run).
+_MODE_RE = re.compile(r"\bmodo\b[:\s*]+([^\n]+)", re.IGNORECASE)
+
 
 class ReportStore:
     """Thin wrapper over the GCS bucket holding the published reports."""
@@ -91,6 +95,18 @@ def extract_titles(body: str) -> list[str]:
     return [t.strip() for t in _TITLE_RE.findall(body)]
 
 
+def extract_mode(body: str) -> str | None:
+    """Normalized run mode declared in the body: 'deep-dive' | 'novo ângulo'.
+
+    Recorded in the manifest so the next run can alternate deterministically
+    (see history.next_mode). None when the body declares no mode (old reports).
+    """
+    match = _MODE_RE.search(body)
+    if not match:
+        return None
+    return "deep-dive" if "deep" in match.group(1).lower() else "novo ângulo"
+
+
 def reserve_stem(report_date: date, manifest: dict[str, Any]) -> str:
     """Pick the next non-clobbering stem for the date, against the manifest.
 
@@ -133,6 +149,7 @@ def publish_run(
         "queries_path": queries_path(stem) if queries_text else None,
         "log_path": log_path(stem) if log_lines else None,
         "titles": extract_titles(body),
+        "mode": extract_mode(body),
         "model": model,
         "cost_usd": cost_usd,
         "queries_run": queries_run,

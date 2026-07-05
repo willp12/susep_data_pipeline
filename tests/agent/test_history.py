@@ -1,7 +1,25 @@
 import pytest
 
-from src.agent.history import build_history_digest, read_report
+from src.agent.history import build_history_digest, next_mode, read_report
 from tests.agent._fakes import FakeStore
+
+
+def test_next_mode_alternates_deterministically() -> None:
+    # Empty history → first report is a broad baseline (novo ângulo).
+    assert next_mode({"reports": []}) == "novo ângulo"
+    # Last report was novo ângulo → flip to deep-dive, and vice-versa.
+    assert next_mode({"reports": [{"stem": "2026-07-05", "mode": "novo ângulo"}]}) == "deep-dive"
+    assert next_mode({"reports": [{"stem": "2026-07-05", "mode": "deep-dive"}]}) == "novo ângulo"
+    # Old entries without a recorded mode bootstrap into a deep-dive.
+    assert next_mode({"reports": [{"stem": "2026-07-05"}]}) == "deep-dive"
+    # The LATEST stem decides — same-day reruns sort after the base stem.
+    manifest = {
+        "reports": [
+            {"stem": "2026-07-05_2", "mode": "deep-dive"},
+            {"stem": "2026-07-05", "mode": "novo ângulo"},
+        ]
+    }
+    assert next_mode(manifest) == "novo ângulo"
 
 
 def _seed(store: FakeStore) -> None:
