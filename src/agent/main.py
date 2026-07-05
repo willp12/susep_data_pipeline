@@ -34,7 +34,7 @@ from claude_agent_sdk import (
 
 from src.agent.emailer import send_report
 from src.agent.glossary import build_glossary
-from src.agent.history import build_history_digest
+from src.agent.history import build_history_digest, next_mode
 from src.agent.providers import provider_env, require_provider_credentials
 from src.agent.publisher import ReportStore, publish_run, queries_path, reserve_stem
 from src.agent.queries import render_queries_appendix, write_queries_appendix
@@ -75,13 +75,30 @@ async def _prompt_stream() -> AsyncIterator[dict[str, Any]]:
     }
 
 
+_MODE_INSTRUCTIONS = {
+    "deep-dive": (
+        "Modo deste run: **deep-dive**. Escolha um fio do histórico abaixo com "
+        "pergunta em aberto, chame `read_report(date)` PRIMEIRO para recuperar "
+        "os números e o SQL exatos daquele report, e aprofunde com queries "
+        "NOVAS (quebra mais fina, o driver por trás, série mais longa, "
+        "entidades/ramos afetados)."
+    ),
+    "novo ângulo": (
+        "Modo deste run: **novo ângulo**. Investigue algo que o histórico "
+        "abaixo ainda não cobriu."
+    ),
+}
+
+
 def _build_system_prompt(store: ReportStore) -> str:
     base = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
     glossary = build_glossary()
     history = build_history_digest(store=store)
+    mode = next_mode(store.load_manifest())
     return (
         f"{base}\n\n"
         f"## Glossário (dbt docs)\n\n{glossary}\n\n"
+        f"## Modo deste run (definido pelo pipeline)\n\n{_MODE_INSTRUCTIONS[mode]}\n\n"
         f"## Histórico de reports (o que já foi coberto)\n\n{history}\n"
     )
 
