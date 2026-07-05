@@ -227,8 +227,8 @@ está publicado).
 ### Rodar localmente
 
 ```bash
-# Pré-requisitos: ANTHROPIC_API_KEY no .env, CLI do Claude Code instalada e o
-# bucket de reports criado (scripts/bootstrap/04_gcp_gcs_reports.sh)
+# Pré-requisitos: ANTHROPIC_API_KEY (ou CLAUDE_CODE_OAUTH_TOKEN, ver abaixo)
+# no .env, CLI do Claude Code instalada e o bucket de reports criado
 npm install -g @anthropic-ai/claude-code
 uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
 uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
@@ -309,10 +309,17 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
   Um ingest por vez (`concurrency`), pois escreve no GCS/BQ e reconstrói os
   marts.
 - **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
-- **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY`, `GCP_WIF_PROVIDER`,
-  `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY` (ingestão, escrita),
-  `BREVO_API_KEY`, `REPORT_EMAIL_FROM`, `REPORT_EMAIL_TO`; variável
-  `GCP_PROJECT_ID`.
+- **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY` (ou
+  `CLAUDE_CODE_OAUTH_TOKEN` — cobra na assinatura, ver abaixo),
+  `GCP_WIF_PROVIDER`, `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY`
+  (ingestão, escrita), `BREVO_API_KEY`, `REPORT_EMAIL_FROM`,
+  `REPORT_EMAIL_TO`; variável `GCP_PROJECT_ID`.
+- **Cobrança por assinatura (opcional):** `claude setup-token` (plano Pro/Max)
+  gera um token OAuth de ~1 ano; salvo como secret `CLAUDE_CODE_OAUTH_TOKEN`,
+  ele **vence** a API key e os runs do agente passam a consumir a cota da
+  assinatura (compartilhada com o uso interativo do Claude Code) em vez de
+  créditos de API. Para voltar pra API, basta deletar o secret. O
+  `AGENT_MAX_BUDGET_USD` segue valendo como guardrail (custo vira estimativa).
 
 ### Git workflow
 

@@ -77,6 +77,11 @@ jobs:
 
       - name: Run insights agent (publishes to GCS + e-mails the report)
         env:
+          # Subscription auth (claude setup-token, Pro/Max): when the token
+          # secret is set it wins over the API key and the run bills the
+          # Claude subscription instead of API credits. The API key stays as
+          # fallback while the token secret is absent (empty = ignored).
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Weekly cadence buys a stronger model: Opus (~1.67x Sonnet pricing,
           # ~US$1/run) at ~4 runs/month is ~4x cheaper than daily Sonnet was.
