@@ -12,6 +12,7 @@ next run — there is no PR-merge lag.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from src.agent.publisher import ReportStore
 
@@ -19,6 +20,22 @@ from src.agent.publisher import ReportStore
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:_\d+)?$")
 
 _NO_HISTORY = "(Nenhum report anterior — este é o primeiro. Faça um baseline amplo do mercado.)"
+
+
+def next_mode(manifest: dict[str, Any]) -> str:
+    """Deterministic 1:1 mode alternation: 'deep-dive' | 'novo ângulo'.
+
+    The model, left to choose, picked "novo ângulo" in 12/12 observed runs and
+    never exercised read_report — so the pipeline assigns the mode instead.
+    The last published report's mode (recorded in the manifest by
+    publisher.extract_mode) flips the next one; entries without a mode (old
+    reports) count as non-deep-dive, so the alternation bootstraps into a
+    deep-dive. An empty manifest means first report ever → broad baseline.
+    """
+    entries = sorted(manifest.get("reports", []), key=lambda e: str(e["stem"]))
+    if not entries:
+        return "novo ângulo"
+    return "novo ângulo" if entries[-1].get("mode") == "deep-dive" else "deep-dive"
 
 
 def build_history_digest(

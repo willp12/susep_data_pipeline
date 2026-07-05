@@ -148,10 +148,11 @@ async def run_sql_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "read_report",
-    "Read the full markdown of a previous daily report by date (YYYY-MM-DD). "
-    "Use it to deep-dive a thread the history digest mentions — it returns the "
-    "prior numbers and the SQL behind them.",
-    {"date": Annotated[str, "Report date, YYYY-MM-DD"]},
+    "Read the full markdown of a previous report by date (YYYY-MM-DD, or "
+    "YYYY-MM-DD_2 for same-day reruns). MANDATORY first step of a deep-dive "
+    "run: call it on the report whose thread you are deepening — it returns "
+    "the prior numbers and the SQL behind them.",
+    {"date": Annotated[str, "Report stem, YYYY-MM-DD or YYYY-MM-DD_n"]},
 )
 async def read_report_tool(args: dict[str, Any]) -> dict[str, Any]:
     try:

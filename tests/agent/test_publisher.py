@@ -1,6 +1,7 @@
 from datetime import date
 
 from src.agent.publisher import (
+    extract_mode,
     extract_titles,
     log_path,
     publish_run,
@@ -22,6 +23,15 @@ def test_extract_titles() -> None:
     assert extract_titles(body) == ["1. Primeiro", "2. Segundo"]
 
 
+def test_extract_mode_normalizes_declarations() -> None:
+    # Formatting varies run to run — all observed shapes must normalize.
+    assert extract_mode("Modo: deep-dive\ntexto") == "deep-dive"
+    assert extract_mode("**Modo: novo ângulo.** Pela primeira vez...") == "novo ângulo"
+    assert extract_mode("modo: novo ângulo — dinâmica competitiva") == "novo ângulo"
+    assert extract_mode("Modo: Deep-Dive em Prestamista") == "deep-dive"
+    assert extract_mode("## Sumário\nsem declaração") is None
+
+
 def test_reserve_stem_suffixes_same_day_runs() -> None:
     manifest = {"reports": [{"stem": "2026-06-09"}, {"stem": "2026-06-09_2"}]}
     assert reserve_stem(date(2026, 6, 9), manifest) == "2026-06-09_3"
@@ -36,7 +46,7 @@ def test_publish_run_uploads_artifacts_and_manifest() -> None:
         stem="2026-06-09",
         report_date=date(2026, 6, 9),
         report_text="--- fm ---\ncorpo",
-        body="### 1. Achado\ntexto",
+        body="Modo: deep-dive\n### 1. Achado\ntexto",
         queries_text="## Query 1\nSELECT 1",
         log_lines=['{"event": "x"}'],
         model="sonnet",
@@ -51,6 +61,7 @@ def test_publish_run_uploads_artifacts_and_manifest() -> None:
     manifest = store.load_manifest()
     assert [e["stem"] for e in manifest["reports"]] == ["2026-06-09"]
     assert entry["titles"] == ["1. Achado"]
+    assert entry["mode"] == "deep-dive"
     assert entry["queries_path"] == "queries/2026/2026-06-09.sql.md"
     assert entry["published_at"]
 
