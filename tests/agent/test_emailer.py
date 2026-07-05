@@ -30,7 +30,8 @@ def test_build_payload_has_parts_and_attachments() -> None:
     assert "<h2>Sumário</h2>" in payload["htmlContent"]
     assert payload["textContent"] == "## Sumário\ntexto"
     names = [att["name"] for att in payload["attachment"]]
-    assert names == ["2026-06-09.md", "2026-06-09.sql.md"]
+    # .txt suffix: Brevo rejects .md attachments ("Unsupported file format").
+    assert names == ["2026-06-09.md.txt", "2026-06-09.sql.md.txt"]
     decoded = base64.b64decode(payload["attachment"][0]["content"]).decode("utf-8")
     assert decoded == "--- fm ---\ncorpo"
 
@@ -45,7 +46,7 @@ def test_build_payload_without_queries_attachment() -> None:
         to="will@example.com",
     )
     names = [att["name"] for att in payload["attachment"]]
-    assert names == ["2026-06-09.md"]
+    assert names == ["2026-06-09.md.txt"]
 
 
 def test_recipients_supports_comma_separated_list() -> None:

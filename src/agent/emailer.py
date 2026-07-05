@@ -60,9 +60,12 @@ def build_payload(
     sender: str,
     to: str,
 ) -> dict[str, Any]:
-    attachments = [_attachment(f"{stem}.md", report_text)]
+    # Brevo rejects attachments whose final extension isn't on its allowlist
+    # ("Unsupported file format: md") — hence the .txt suffix. The GCS copies
+    # keep their .md names; only the e-mail attachment names differ.
+    attachments = [_attachment(f"{stem}.md.txt", report_text)]
     if queries_text:
-        attachments.append(_attachment(f"{stem}.sql.md", queries_text))
+        attachments.append(_attachment(f"{stem}.sql.md.txt", queries_text))
     return {
         "sender": {"email": sender, "name": "SUSEP Insights"},
         "to": _recipients(to),
