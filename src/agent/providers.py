@@ -28,7 +28,14 @@ def provider_env(settings: Settings) -> dict[str, str]:
             "ANTHROPIC_AUTH_TOKEN": "lmstudio",
         }
     if settings.claude_code_oauth_token:
-        return {"CLAUDE_CODE_OAUTH_TOKEN": settings.claude_code_oauth_token}
+        # The SDK MERGES this dict over the inherited process env, and the CLI
+        # prefers ANTHROPIC_API_KEY over the OAuth token — so an inherited key
+        # (CI step env, .env via load_dotenv) would silently win and bill the
+        # API. Blank it out: the CLI treats "" as unset and uses the token.
+        return {
+            "CLAUDE_CODE_OAUTH_TOKEN": settings.claude_code_oauth_token,
+            "ANTHROPIC_API_KEY": "",
+        }
     return {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
 
 

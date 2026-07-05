@@ -12,14 +12,20 @@ def test_anthropic_provider_env_passes_api_key() -> None:
 def test_oauth_token_wins_over_api_key() -> None:
     settings = Settings(anthropic_api_key="sk-test", claude_code_oauth_token="sk-ant-oat01-x")
     env = provider_env(settings)
-    assert env == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x"}
-    # Exactly one credential reaches the spawned CLI.
-    assert "ANTHROPIC_API_KEY" not in env
+    # The key is explicitly BLANKED, not omitted: the SDK merges this dict
+    # over the inherited process env, and the CLI prefers a non-empty
+    # ANTHROPIC_API_KEY over the token (verified against claude 2.1.147).
+    assert env == {
+        "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x",
+        "ANTHROPIC_API_KEY": "",
+    }
 
 
 def test_oauth_token_alone_is_enough() -> None:
     settings = Settings(claude_code_oauth_token="sk-ant-oat01-x")
-    assert provider_env(settings) == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x"}
+    env = provider_env(settings)
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-x"
+    assert env["ANTHROPIC_API_KEY"] == ""
 
 
 def test_local_provider_env_points_to_lmstudio() -> None:
