@@ -84,8 +84,7 @@ _MODE_INSTRUCTIONS = {
         "entidades/ramos afetados)."
     ),
     "novo ângulo": (
-        "Modo deste run: **novo ângulo**. Investigue algo que o histórico "
-        "abaixo ainda não cobriu."
+        "Modo deste run: **novo ângulo**. Investigue algo que o histórico abaixo ainda não cobriu."
     ),
 }
 

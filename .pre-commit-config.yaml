@@ -18,8 +18,11 @@ repos:
         args: ["--maxkb=5000"]
       - id: detect-private-key
 
+  # Keep this rev in lockstep with the ruff version in uv.lock — a drifted
+  # hook formats differently from `ruff format --check` in CI and lets
+  # commits through that the CI then rejects.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.15.11
     hooks:
       - id: ruff
         args: ["--fix"]
