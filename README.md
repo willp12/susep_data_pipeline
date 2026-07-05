@@ -43,7 +43,7 @@ flowchart LR
     end
 
     subgraph SRV["Serving — analytics"]
-        RUN["Agente de insights<br/>diário, GitHub Actions<br/>(WIF + SA read-only)"]
+        RUN["Agente de insights<br/>semanal, GitHub Actions<br/>(WIF + SA read-only)"]
         GCS[("GCS reports bucket<br/>reports · queries · logs ·<br/>manifest.json")]
         MAIL["E-mail<br/>(Brevo API)"]
         CHAT["Chat analítico<br/>local, multi-turn<br/>(make chat)"]
@@ -76,7 +76,7 @@ Pontos de desenho:
   curado (dedup embutido, nomes oficiais via dims, métricas pré-computadas).
 - **O bucket GCS é a fonte de verdade dos reports** — nada de report no git; o
   `manifest.json` (datas + títulos) dá memória/continuidade barata aos runs.
-- **Mesmo núcleo, dois modos**: o agente diário (one-shot) e o chat
+- **Mesmo núcleo, dois modos**: o agente semanal (one-shot) e o chat
   (multi-turn) compartilham tools, gate, glossário, histórico e o toggle de
   provider — Claude API ou LM Studio local.
 
@@ -157,9 +157,11 @@ não-interativamente, setar `BOOTSTRAP_ASSUME_YES=1`.
 ## Agente de insights
 
 Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e gera um relatório
-diário de insights de negócio. Os artefatos vão pro **bucket GCS de reports**
+semanal de insights de negócio. Os artefatos vão pro **bucket GCS de reports**
 (análise, apêndice de queries e run log) e o report chega por **e-mail** pra
-revisão humana. Roda diariamente via GitHub Actions; nada é commitado no repo.
+revisão humana. Roda semanalmente via GitHub Actions (Opus; a base SUSEP
+atualiza ~mensalmente, então cadência diária só re-analisava dado parado);
+nada é commitado no repo.
 
 ### Como funciona
 
@@ -238,7 +240,7 @@ Um chat multi-turn (`src/chat/`) pra conversar sobre os reports publicados e
 aprofundar temas: o agente recebe o digest do manifest (datas + títulos),
 puxa reports inteiros via `read_report` (com o SQL do apêndice) e roda queries
 novas no BigQuery — mesmas tools, mesmo gate default-deny e mesmo toggle de
-provider (Anthropic ou LM Studio local) do agente diário.
+provider (Anthropic ou LM Studio local) do agente semanal.
 
 ```bash
 make chat-ui     # interface web (Streamlit, http://localhost:8501)
@@ -261,7 +263,7 @@ populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
 sobre seguradoras (parcerias, M&A, regulação) como **contexto** dos números,
 sempre citadas com fonte + data + link, nunca como fonte de cifras. Cap de
 `NEWS_MAX_SEARCHES` buscas por conversa (default 5). Sem a key, a tool não é
-registrada e nada muda. (Habilitar no report diário vem num próximo PR.)
+registrada e nada muda. (Habilitar no report semanal vem num próximo PR.)
 
 ### Rodar com modelo local (LM Studio)
 
@@ -284,12 +286,14 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
 > **Caveat:** o agente depende de *tool calling* confiável (muitas chamadas de
 > `run_sql`). O Gemma é fraco nisso; se ele não emitir tool calls direito,
 > modelos como **Qwen3** (14B / 30B-A3B) têm function calling nativo bem melhor
-> no LM Studio. O caminho Anthropic segue sendo o default do workflow diário —
+> no LM Studio. O caminho Anthropic segue sendo o default do workflow semanal —
 > o modo local é manual/experimental.
 
 ### Em produção (GitHub Actions)
 
-- **`insights.yml`** — `schedule` diário + `workflow_dispatch`. Autentica no GCP
+- **`insights.yml`** — `schedule` **semanal** (segundas 14:00 UTC, ~2h depois
+  do ingest) + `workflow_dispatch`. Roda com `AGENT_MODEL=opus` e budget de
+  US$ 1,25/run (o default local segue sonnet/0,75). Autentica no GCP
   via Workload Identity Federation (SA `bq-agent-readonly`: leitura no BQ +
   `objectAdmin` no bucket de reports), roda o agente, **publica no GCS** e envia
   o e-mail. Nada é commitado no repo; as cópias scratch viram artifact do

@@ -24,7 +24,10 @@ _NO_HISTORY = "(Nenhum report anterior — este é o primeiro. Faça um baseline
 def build_history_digest(
     *,
     store: ReportStore | None = None,
-    max_reports: int = 21,
+    # ~2.5 months of memory at the weekly cadence. Run logs show the agent
+    # never deep-dives past reports (read_report unused), so deep history only
+    # inflates the system prompt (~160 tokens/report per turn).
+    max_reports: int = 10,
 ) -> str:
     """Build a compact markdown digest of recent reports' insight titles."""
     target_store = store or ReportStore()
