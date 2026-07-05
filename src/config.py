@@ -35,6 +35,10 @@ class Settings(BaseModel):
 
     # Insights agent (CP-C). The API key is read but never logged.
     anthropic_api_key: str = Field(default="")
+    # Subscription auth (claude setup-token, Pro/Max): when set, agent runs
+    # bill the Claude subscription instead of API credits and this token wins
+    # over the API key. Read but never logged.
+    claude_code_oauth_token: str = Field(default="")
     agent_model: str = Field(default="sonnet")
     agent_max_turns: int = Field(default=20)
     agent_max_budget_usd: float = Field(default=0.75)
@@ -94,6 +98,7 @@ def get_settings() -> Settings:
             "https://www2.susep.gov.br/menuestatistica/SES/principal.aspx",
         ),
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        claude_code_oauth_token=os.getenv("CLAUDE_CODE_OAUTH_TOKEN", ""),
         agent_model=os.getenv("AGENT_MODEL", "sonnet"),
         agent_max_turns=int(os.getenv("AGENT_MAX_TURNS", "20")),
         agent_max_budget_usd=float(os.getenv("AGENT_MAX_BUDGET_USD", "0.75")),
