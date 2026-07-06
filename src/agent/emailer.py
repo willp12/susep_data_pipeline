@@ -137,7 +137,9 @@ def _deliver(payload: dict[str, Any], settings: Settings) -> str:
         )
         return "failed"
 
-    log.info("agent.email.sent", to=payload["to"], subject=payload["subject"])
+    # Log the recipient count, not the addresses — this event is serialised into
+    # the run log published to GCS, and recipients are (operator) PII.
+    log.info("agent.email.sent", recipients=len(payload["to"]), subject=payload["subject"])
     return "sent"
 
 

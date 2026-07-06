@@ -31,7 +31,6 @@ fi
 
 # --- Required CLIs -----------------------------------------------------------
 command -v gcloud >/dev/null 2>&1 || fail "gcloud CLI not found on PATH."
-command -v bq     >/dev/null 2>&1 || fail "bq CLI not found on PATH (part of gcloud SDK)."
 
 # --- GCP check ---------------------------------------------------------------
 log "Checking GCP application-default credentials..."
