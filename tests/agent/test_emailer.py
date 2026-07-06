@@ -15,6 +15,22 @@ def test_render_html_converts_markdown() -> None:
     assert "Insights SUSEP SES — 2026-06-09" in html
 
 
+def test_render_html_sanitises_injected_markup() -> None:
+    # The body is model-generated and could carry injected markup (via prompt
+    # injection through the data it reads). render_html must strip it.
+    body = (
+        "Análise ok.\n\n"
+        "<script>steal()</script>\n\n"
+        '<img src="x" onerror="alert(1)">\n\n'
+        "[click](javascript:alert(1))"
+    )
+    html = emailer.render_html(body, "2026-06-09").lower()
+    assert "<script" not in html
+    assert "onerror" not in html
+    assert "javascript:" not in html
+    assert "análise ok." in html  # legit content survives
+
+
 def test_build_payload_has_parts_and_attachments() -> None:
     payload = emailer.build_payload(
         stem="2026-06-09",

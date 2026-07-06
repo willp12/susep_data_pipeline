@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.agent.tools.bq_query import DEFAULT_MAX_BYTES, QueryTooExpensiveError, run_sql
+from src.agent.tools.bq_query import (
+    DEFAULT_MAX_BYTES,
+    NonReadOnlyQueryError,
+    QueryTooExpensiveError,
+    run_sql,
+)
 
 
 def _dry_run_job(estimated_bytes: int) -> MagicMock:
@@ -80,3 +85,45 @@ def test_run_sql_respects_custom_cap() -> None:
 
     with pytest.raises(QueryTooExpensiveError):
         run_sql("SELECT * FROM t", max_bytes=256 * 1024**2, client=client)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "EXPORT DATA OPTIONS(uri='gs://b/*.csv') AS SELECT 1",
+        "SELECT 1; EXPORT DATA OPTIONS(uri='gs://b/*') AS SELECT 2",
+        "EXECUTE IMMEDIATE 'SELECT 1'",
+        "DELETE FROM t WHERE 1=1",
+        "DROP TABLE t",
+        "CREATE TABLE t AS SELECT 1",
+        "INSERT INTO t VALUES (1)",
+        "SELECT 1; DROP TABLE t",
+        "/* c */ EXPORT/**/DATA OPTIONS(uri='gs://b') AS SELECT 1",  # comment evasion
+        "   ",
+    ],
+)
+def test_run_sql_rejects_non_readonly_without_executing(sql: str) -> None:
+    client = MagicMock()
+    with pytest.raises(NonReadOnlyQueryError):
+        run_sql(sql, client=client)
+    # Rejected by the shape guard before any BigQuery call (not even a dry-run).
+    assert client.query.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1",
+        "select ramo from t",
+        "WITH x AS (SELECT 1) SELECT * FROM x",
+        "  SELECT 1  ;  ",  # trailing semicolon is fine
+        "(SELECT 1) UNION ALL (SELECT 2)",
+        "SELECT 'DROP TABLE t' AS note",  # keyword only inside a string literal
+    ],
+)
+def test_run_sql_allows_readonly_queries(sql: str) -> None:
+    client = MagicMock()
+    client.query.side_effect = [_dry_run_job(10), _result_job([{"a": 1}], bytes_processed=10)]
+    result = run_sql(sql, client=client)
+    assert result["row_count"] == 1
+    assert client.query.call_count == 2

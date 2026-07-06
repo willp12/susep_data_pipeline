@@ -31,10 +31,15 @@ def is_configured(settings: Settings) -> bool:
 
 def render_html(body: str, stem: str) -> str:
     # Imported lazily so the ingestion pipeline (which only sends the plain
-    # text notice) doesn't need the agent group's markdown dependency.
+    # text notice) doesn't need the agent group's markdown/nh3 dependencies.
     import markdown
+    import nh3
 
-    inner = markdown.markdown(body, extensions=["tables", "fenced_code"])
+    # The body is model-generated: sanitise the rendered HTML so injected markup
+    # (script, event handlers, javascript: links) can't reach the reader's mail
+    # client or the GCS-served copy. nh3 keeps safe formatting — headings,
+    # tables, code, links — and drops everything else.
+    inner = nh3.clean(markdown.markdown(body, extensions=["tables", "fenced_code"]))
     return (
         '<html><body style="font-family: sans-serif; max-width: 720px;">'
         f"<h1>Insights SUSEP SES — {stem}</h1>{inner}"

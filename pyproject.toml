@@ -32,6 +32,7 @@ dev = [
 agent = [
     "claude-agent-sdk>=0.1",
     "markdown>=3.10.2",
+    "nh3>=0.2",
 ]
 ui = [
     "streamlit>=1.58.0",

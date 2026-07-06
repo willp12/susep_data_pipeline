@@ -22,7 +22,7 @@ from claude_agent_sdk import (
 
 from src.agent.history import read_report
 from src.agent.tools import describe_table, run_sql, sample_rows, search_news
-from src.agent.tools.bq_query import QueryTooExpensiveError
+from src.agent.tools.bq_query import NonReadOnlyQueryError, QueryTooExpensiveError
 from src.config import get_settings
 
 SERVER_NAME = "bq"
@@ -132,7 +132,7 @@ async def run_sql_tool(args: dict[str, Any]) -> dict[str, Any]:
     _QUERY_LOG.append(entry)
     try:
         result = run_sql(sql)
-    except QueryTooExpensiveError as exc:
+    except (QueryTooExpensiveError, NonReadOnlyQueryError) as exc:
         entry.status = "rejected"
         entry.error = str(exc)
         return _error(str(exc))
