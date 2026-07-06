@@ -1,10 +1,13 @@
 # susep-ses-pipeline
 
+[![CI](https://github.com/willp12/susep_data_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/willp12/susep_data_pipeline/actions/workflows/ci.yml)
+
 Pipeline de engenharia de dados que ingere estatísticas públicas do
 [SUSEP SES](https://www2.susep.gov.br/menuestatistica/SES/principal.aspx) para
 BigQuery, usando GCS como storage intermediário e dbt para transformações.
 
-> **Status:** MVP — Fase 1 (rodada manual, local, um único arquivo end-to-end).
+> **Status:** ativo — ingestão e report de insights semanais via GitHub Actions;
+> chat analítico local; infra em Terraform.
 
 ## Stack
 
@@ -15,6 +18,9 @@ BigQuery, usando GCS como storage intermediário e dbt para transformações.
 - google-cloud-bigquery + google-cloud-storage (single-cloud: GCP only)
 - dbt-core / dbt-bigquery (>=1.11,<1.12)
 - pydantic v2, structlog
+- [Claude Agent SDK](https://docs.anthropic.com/en/api/agent-sdk) (agente de insights + chat)
+- Streamlit (UI do chat) · Brevo (e-mail transacional) · Tavily (notícias, opcional)
+- Terraform (infra GCP: datasets, buckets, service accounts, IAM, WIF)
 - ruff, mypy, pre-commit, pytest
 
 ## Arquitetura
@@ -92,8 +98,8 @@ Pontos de desenho:
 
 ```bash
 # Clone e entra no diretório
-git clone <repo-url> susep-ses-pipeline
-cd susep-ses-pipeline
+git clone https://github.com/willp12/susep_data_pipeline.git
+cd susep_data_pipeline
 
 # Sincroniza dependências (cria .venv automaticamente) e instala pre-commit
 make install
@@ -113,7 +119,7 @@ uv run python -c "import polars; print(polars.__version__)"
 ```
 
 Ambos devem rodar sem erro. Se houver conflito de `pyarrow`/`protobuf` entre
-polars e dbt-bigquery, reportar antes de prosseguir.
+polars e dbt-bigquery, abra uma issue.
 
 ## Primeira execução (infra)
 
@@ -135,7 +141,7 @@ habilitar APIs, e a tabela `ingestion_log` — cujo schema evolui com o código)
 | ------------------------- | ---------------------------------------------------------------------- |
 | `00_preflight.sh`         | Valida GCP creds, `.env`, CLIs, e pede confirmação interativa.        |
 | `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com`. |
-| `03_gcp_bigquery.sh`      | Garante a tabela `ingestion_log` (particionada por `ingestion_date`, clusterizada por `file_name`; converge colunas nullable novas como `period`/`generated_at`). Os datasets são do Terraform. **Nunca faz DELETE/DROP.** |
+| `03_gcp_bigquery.sh`      | Garante os datasets (idempotente, redundante com o Terraform por segurança) e a tabela `ingestion_log` (particionada por `ingestion_date`, clusterizada por `file_name`; converge colunas nullable novas como `period`/`generated_at`). **Nunca faz DELETE/DROP.** |
 | `run_all.sh`              | Roda `00 → 02 → 03`, para no primeiro erro.                            |
 
 Os buckets de reports/dados, as SAs (`bq-agent-readonly`, `susep-ingest`) + IAM
@@ -171,7 +177,7 @@ nada é commitado no repo.
 - **Nomes determinísticos:** a fct traz `branch_name`, `ramo_group_name`,
   `entity_name` e `economic_group_name` (joins das `dim_*`), pra o agente não
   inferir rótulos. As dims vêm das tabelas de domínio do SES, carregadas por
-  `uv run python -m src.bronze.unzip_dims <zip>` (Fase 2).
+  `uv run python -m src.bronze.unzip_dims <zip>`.
 - **Taxonomia CNSeg:** além do grupo de ramos SUSEP, a fct traz
   `cnseg_segmento` / `cnseg_grupo_1` / `cnseg_grupo_2` (via `dim_cnseg`), um
   de-para curado mantido no seed `dbt/seeds/cnseg_ramos.csv` — corte de mercado
@@ -323,40 +329,45 @@ então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
 
 ### Git workflow
 
-- `main` é protegida: toda mudança entra via PR.
-- Trabalho acontece em feature branches (`feat/`, `fix/`, `chore/`) que mergeiam
-  em `develop`. Depois `develop` → `main` via PR.
-- [Conventional Commits](https://www.conventionalcommits.org/) obrigatório.
+- Trabalho em feature branches (`feat/`, `fix/`, `chore/`) que entram em `main`
+  via PR; cada PR roda o CI (ruff + mypy + pytest + scan de segredos).
+- [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## Estrutura
 
 ```
 susep-ses-pipeline/
-├── .github/workflows/            # insights.yml (agente) + ci.yml (lint/test/secret-scan)
-├── scripts/bootstrap/            # provisionamento (vira Terraform na Fase 6)
+├── .github/workflows/            # ci.yml (lint/test/secret-scan) · ingest.yml · insights.yml
+├── infra/                        # Terraform (datasets, buckets, SAs, IAM, WIF)
+├── scripts/
+│   ├── bootstrap/                # provisionamento residual (APIs + ingestion_log)
+│   └── backfill_reports_to_gcs.py
 ├── src/
-│   ├── main.py                   # entrypoint da pipeline
+│   ├── main.py                   # entrypoint da pipeline de ingestão
 │   ├── config.py                 # carrega env vars
 │   ├── ingestion/                # scraper, hasher, downloader
 │   ├── bronze/                   # unzip → parquet
 │   ├── storage/                  # GCS object I/O (upload/download/parse gs://)
 │   ├── loaders/                  # GCS → BigQuery (load_table_from_uri)
 │   ├── state/                    # ingestion_log
-│   └── agent/                    # agente de insights (tools, glossário, histórico, prompt)
+│   ├── agent/                    # agente de insights (tools, glossário, histórico, prompt)
+│   └── chat/                     # chat analítico multi-turn (CLI + Streamlit)
 ├── dbt/
-│   └── models/
-│       ├── staging/              # stg_ses_seguros (view)
-│       └── marts/                # fct_seguros (fato curado lido pelo agente)
+│   ├── models/                   # staging (view) + marts (fct_seguros + dims)
+│   ├── seeds/                    # cnseg_ramos.csv (de-para de ramos CNSeg)
+│   └── macros/                   # br_to_numeric, generate_schema_name
 ├── reports/                      # scratch local do run (fonte de verdade = bucket GCS)
-├── tests/
+├── tests/                        # espelha src/ (pytest + fakes; sem rede/creds)
 └── pyproject.toml
 ```
 
-## Fora de escopo neste MVP
+## Fora de escopo (por ora)
 
-- Terraform (Fase 6)
-- Demais CSVs de dados do zip (as tabelas de domínio/lookup já são ingeridas; os
-  outros CSVs de fato — resseguros, cap, prev, etc. — seguem fora de escopo)
-- Camadas silver/gold no dbt (Fase 3)
-- Separação dev vs prod (Fase 3)
-- Slack alerts (Fase 5)
+- Demais CSVs de fato do zip (resseguros, capitalização, previdência…); as
+  tabelas de domínio/lookup já são ingeridas.
+- Camadas silver/gold no dbt e separação dev vs prod.
+- Migração do ingest para WIF (hoje usa chave JSON de SA) e alertas de Slack.
+
+## Licença
+
+[MIT](LICENSE).

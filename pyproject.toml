@@ -1,7 +1,7 @@
 [project]
 name = "susep-ses-pipeline"
 version = "0.1.0"
-description = "Pipeline de ingestão dos dados públicos SUSEP SES (S3 → BigQuery → dbt)"
+description = "Pipeline de dados das estatísticas públicas da SUSEP (SES): ingestão → GCS → BigQuery → dbt, com agente de insights (LLM) e chat analítico."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -26,7 +26,7 @@ dev = [
     "pre-commit>=3.7",
     "types-markdown>=3.10.2.20260518",
 ]
-# Insights agent (CP-B onwards). Kept out of the main deps so the ingestion
+# Insights agent. Kept out of the main deps so the ingestion
 # worker doesn't pull the Claude SDK. google-cloud-bigquery is already a
 # core dependency, so the BQ tools work without this group installed.
 agent = [

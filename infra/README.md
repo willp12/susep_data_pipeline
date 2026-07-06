@@ -1,11 +1,12 @@
 # infra/ — Terraform
 
-Infrastructure as code for the SUSEP SES pipeline (GCP). This replaces the
-imperative `scripts/bootstrap/*.sh` over a staged migration — see the
-[roadmap](#roadmap) below. As of Etapa 1, the core GCP resources (datasets,
-service accounts, IAM, reports bucket) are adopted into Terraform via
-`import {}` blocks with a verified no-op `plan` (nothing recreated). WIF
-(Etapa 1c) and the S3→GCS data move (Etapa 2) are still pending.
+Infrastructure as code for the SUSEP SES pipeline (GCP). Terraform manages the
+BigQuery datasets, service accounts, IAM, the reports and data buckets, and
+Workload Identity Federation — adopted from the live project via `import {}`
+blocks with a verified no-op `plan` (nothing recreated). A thin
+`scripts/bootstrap/` remains only for what Terraform doesn't own (API enablement
+and the `ingestion_log` table, whose schema evolves with the code). See the
+[roadmap](#roadmap) for what's left.
 
 ## First-time setup
 
@@ -44,9 +45,9 @@ Never let Terraform destroy-and-recreate a stateful resource.
 | 0 | Scaffold: `versions`/`backend`/`providers`/`variables` + state bucket script + docs | ✅ feito |
 | 1 | Import: 3 datasets, 2 SAs, project IAM, dataset WRITER, reports bucket + IAM. `plan` no-op verificado (13 imported, 0 destroyed) | ✅ feito |
 | 1c | Import do WIF (pool `github-actions-pool` + provider `github-provider` + binding). `plan` no-op (3 imported, 0 changed) | ✅ feito |
-| 2 | Bucket GCS de dados (TF) + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`). Código pronto; `apply` do bucket após merge | em revisão |
+| 2 | Bucket GCS de dados (TF) + refactor boto3→GCS no pipeline; remove AWS (`boto3`, secrets `AWS_*`, `01_aws_s3.sh`). Pipeline single-cloud | ✅ feito |
 | 3 | (opcional) provider `github` p/ secrets; auth do ingest via WIF (aposenta `GCP_SA_KEY`) | a fazer |
-| 4 | Remove bootstrap obsoletos (`04`/`05` → TF); infra = `terraform apply`; secrets AWS removidos. Bucket S3 mantido (arquivo) — deletar quando quiser | parcial |
+| 4 | Remove bootstrap obsoletos (`04`/`05` → TF); infra = `terraform apply`; secrets AWS removidos. Bucket S3 mantido (arquivo) — deletar quando quiser | ✅ feito |
 | 5 | (opcional) `terraform plan` em PR (CI), workspaces dev/prod, drift detection | a fazer |
 
 ## Layout
@@ -56,9 +57,9 @@ infra/
 ├── versions.tf      # terraform >=1.5 (import blocks) + google ~>6.0
 ├── backend.tf       # gcs backend (bucket via -backend-config; prefix susep/)
 ├── providers.tf     # google provider (ADC auth)
-├── variables.tf     # inputs; defaults mirror current infra
+├── variables.tf     # inputs; bucket names derive from project_id
 ├── terraform.tfvars.example
-├── bigquery.tf      # datasets + ingestion_log   (Etapa 1)
+├── bigquery.tf      # datasets + dataset IAM (agent read / ingest write)
 ├── storage.tf       # reports bucket (E1) + data bucket (E2)
 ├── iam.tf           # service accounts + bindings (Etapa 1)
 ├── wif.tf           # workload identity federation (Etapa 1)
