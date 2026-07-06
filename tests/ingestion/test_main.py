@@ -84,3 +84,27 @@ def test_emit_github_output_noop_without_env(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     # Must not raise when not running under Actions.
     m._emit_github_output({"status": "ingested", "period": "202603"})
+
+
+def test_emit_github_output_drops_malformed_period(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gh_output = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+    # A scraped period that isn't YYYYMM (here carrying shell metacharacters and
+    # a newline that could inject an extra output) must be dropped, not written.
+    m._emit_github_output({"status": "ingested", "period": "202604$(whoami)\nstatus=hacked"})
+    written = gh_output.read_text(encoding="utf-8")
+    assert "status=ingested" in written
+    assert "period=\n" in written  # emitted empty
+    assert "whoami" not in written
+    assert "status=hacked" not in written
+
+
+def test_emit_github_output_keeps_valid_period(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gh_output = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(gh_output))
+    m._emit_github_output({"status": "ingested", "period": "202604"})
+    assert "period=202604" in gh_output.read_text(encoding="utf-8")

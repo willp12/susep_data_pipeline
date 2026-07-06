@@ -24,6 +24,7 @@ so the BQ profile (``profiles.yml``) resolves against the current `.env`.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,7 @@ log = structlog.get_logger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DBT_DIR = _REPO_ROOT / "dbt"
+_PERIOD_RE = re.compile(r"\d{6}")  # SUSEP reference period is YYYYMM
 
 
 def _configure_logging() -> None:
@@ -114,9 +116,17 @@ def _emit_github_output(outcome: dict[str, str]) -> None:
     gh_output = os.environ.get("GITHUB_OUTPUT")
     if not gh_output:
         return
+    # period is scraped from the SUSEP page; only emit it when it matches the
+    # expected YYYYMM shape. Anything else (incl. newlines or shell metacharacters)
+    # is dropped so a tampered page can't inject extra step outputs or code into
+    # the workflow that consumes this value. status is a fixed literal, so safe.
+    period = outcome["period"]
+    if period and not _PERIOD_RE.fullmatch(period):
+        log.warning("main.period.unexpected_format", period=period)
+        period = ""
     with open(gh_output, "a", encoding="utf-8") as fh:
         fh.write(f"status={outcome['status']}\n")
-        fh.write(f"period={outcome['period']}\n")
+        fh.write(f"period={period}\n")
 
 
 def main() -> int:

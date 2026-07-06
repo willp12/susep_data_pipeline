@@ -68,6 +68,9 @@ jobs:
         if: steps.ingest.outputs.status == 'ingested'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Passed via env (not inlined as ${{ }}) and quoted below, so a value
+          # scraped from the SUSEP page can't inject shell code into this step.
+          PERIOD: ${{ steps.ingest.outputs.period }}
         run: |
-          echo "New period ${{ steps.ingest.outputs.period }} ingested — dispatching insights."
+          echo "New period $PERIOD ingested — dispatching insights."
           gh workflow run insights.yml
