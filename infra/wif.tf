@@ -19,7 +19,9 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_provider_id = "github-provider"
   display_name                       = "GitHub OIDC"
 
-  attribute_condition = "assertion.repository == 'willp12/susep_data_pipeline'"
+  # Restrict token minting to this repo AND the main branch: scheduled runs and
+  # workflow_dispatch both execute on main, so no other ref needs GCP access.
+  attribute_condition = "assertion.repository == 'willp12/susep_data_pipeline' && assertion.ref == 'refs/heads/main'"
 
   attribute_mapping = {
     "attribute.ref"        = "assertion.ref"

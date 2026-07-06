@@ -40,6 +40,15 @@ resource "google_bigquery_dataset_iam_member" "ingest_writer" {
   member     = "serviceAccount:${local.ingest_sa_email}"
 }
 
+# Read-only insights SA: dataset-scoped viewer (replaces the old project-wide
+# bigquery.dataViewer). New binding — created on apply, no import block.
+resource "google_bigquery_dataset_iam_member" "agent_reader" {
+  for_each   = local.datasets
+  dataset_id = each.value
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${local.agent_sa_email}"
+}
+
 import {
   for_each = local.datasets
   to       = google_bigquery_dataset.this[each.key]

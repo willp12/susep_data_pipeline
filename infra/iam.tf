@@ -32,13 +32,9 @@ import {
 }
 
 # --- Project-level roles ----------------------------------------------------
-# Read-only insights SA: view data + run jobs.
-resource "google_project_iam_member" "agent_data_viewer" {
-  project = var.project_id
-  role    = "roles/bigquery.dataViewer"
-  member  = "serviceAccount:${local.agent_sa_email}"
-}
-
+# Read-only insights SA: run jobs at the project level; data read is
+# dataset-scoped (bigquery.tf `agent_reader`), not a project-wide dataViewer,
+# so the agent can't read unrelated datasets in this shared project.
 resource "google_project_iam_member" "agent_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
@@ -50,11 +46,6 @@ resource "google_project_iam_member" "ingest_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
   member  = "serviceAccount:${local.ingest_sa_email}"
-}
-
-import {
-  to = google_project_iam_member.agent_data_viewer
-  id = "${var.project_id} roles/bigquery.dataViewer serviceAccount:${local.agent_sa_email}"
 }
 
 import {
