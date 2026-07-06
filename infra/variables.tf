@@ -40,15 +40,15 @@ variable "dataset_marts" {
 
 # --- Buckets ----------------------------------------------------------------
 variable "reports_bucket" {
-  description = "GCS bucket for agent reports (Etapa 1 import)."
+  description = "GCS bucket for agent reports. Empty = derived as <project_id>-susep-ses-reports (see storage.tf)."
   type        = string
-  default     = "hardy-portal-455916-d3-susep-ses-reports"
+  default     = ""
 }
 
 variable "data_bucket" {
-  description = "GCS bucket for raw + bronze data (Etapa 2 — replaces S3)."
+  description = "GCS bucket for raw + bronze data. Empty = derived as <project_id>-susep-ses-data (see storage.tf)."
   type        = string
-  default     = "hardy-portal-455916-d3-susep-ses-data"
+  default     = ""
 }
 
 # --- Service accounts (Etapa 1 imports these) -------------------------------

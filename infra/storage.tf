@@ -3,8 +3,16 @@
 # - reports bucket: agent outputs (Etapa 1, imported).
 # - data bucket: raw zips + bronze parquet, replacing S3 (Etapa 2, created).
 
+# Bucket names derive from the project id (mirrors src/config.py). Override the
+# reports_bucket / data_bucket variables only to adopt pre-existing buckets whose
+# names don't follow the <project_id>-susep-ses-* convention.
+locals {
+  reports_bucket = var.reports_bucket != "" ? var.reports_bucket : "${var.project_id}-susep-ses-reports"
+  data_bucket    = var.data_bucket != "" ? var.data_bucket : "${var.project_id}-susep-ses-data"
+}
+
 resource "google_storage_bucket" "reports" {
-  name                        = var.reports_bucket
+  name                        = local.reports_bucket
   location                    = var.location
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true
@@ -30,19 +38,19 @@ resource "google_storage_bucket_iam_member" "reports_agent" {
 
 import {
   to = google_storage_bucket.reports
-  id = var.reports_bucket
+  id = local.reports_bucket
 }
 
 import {
   to = google_storage_bucket_iam_member.reports_agent
-  id = "b/${var.reports_bucket} roles/storage.objectAdmin serviceAccount:${local.agent_sa_email}"
+  id = "b/${local.reports_bucket} roles/storage.objectAdmin serviceAccount:${local.agent_sa_email}"
 }
 
 # --- Data bucket (Etapa 2) — raw + bronze, replacing S3 -----------------------
 # Created (not imported). Lifecycle mirrors the old 01_aws_s3.sh: raw → cooler
 # storage after 30d, noncurrent versions pruned (raw 90d, bronze 365d).
 resource "google_storage_bucket" "data" {
-  name                        = var.data_bucket
+  name                        = local.data_bucket
   location                    = var.location
   storage_class               = "STANDARD"
   uniform_bucket_level_access = true

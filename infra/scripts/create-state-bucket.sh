@@ -7,7 +7,7 @@
 # corrupted/concurrent state write can be rolled back.
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-hardy-portal-455916-d3}"
+PROJECT_ID="${GCP_PROJECT_ID:?set GCP_PROJECT_ID (e.g. export GCP_PROJECT_ID=your-project-id)}"
 LOCATION="${TF_STATE_LOCATION:-US}"
 BUCKET="${TF_STATE_BUCKET:-${PROJECT_ID}-tf-state}"
 

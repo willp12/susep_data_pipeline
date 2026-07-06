@@ -4,8 +4,8 @@
 # GitHub OIDC tokens from this repo impersonate the bq-agent-readonly SA.
 # Imported, not created — a no-op plan proves we captured the live config.
 #
-# NOTE: the pool `github` / provider `fidc-prod` belongs to a DIFFERENT project
-# (fidc) — it is intentionally NOT managed here.
+# NOTE: a separate workload in this shared project owns its own WIF pool/provider;
+# it is intentionally NOT managed here.
 
 data "google_project" "this" {}
 
@@ -36,7 +36,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 resource "google_service_account_iam_member" "agent_wif" {
   service_account_id = google_service_account.agent.name
   role               = "roles/iam.workloadIdentityUser"
-  member = "principalSet://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/willp12/susep_data_pipeline"
+  member             = "principalSet://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/github-actions-pool/attribute.repository/willp12/susep_data_pipeline"
 }
 
 import {

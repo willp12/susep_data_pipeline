@@ -13,12 +13,16 @@ service accounts, IAM, reports bucket) are adopted into Terraform via
 # 1) One-time: create the remote-state bucket (out-of-band — see backend.tf).
 bash infra/scripts/create-state-bucket.sh
 
-# 2) Auth (Application Default Credentials) and init the backend.
+# 2) Auth (Application Default Credentials).
 gcloud auth application-default login        # if not already
 cd infra
-cp terraform.tfvars.example terraform.tfvars # adjust if needed
-terraform init                               # connects to the gcs backend
-terraform plan                               # Etapa 0: "No changes."
+cp terraform.tfvars.example terraform.tfvars # set project_id
+
+# 3) Point the backend at your state bucket. The name isn't hardcoded (see
+#    backend.tf), so pass it via a gitignored backend.hcl:
+echo "bucket = \"${GCP_PROJECT_ID}-tf-state\"" > backend.hcl
+terraform init -backend-config=backend.hcl
+terraform plan
 ```
 
 ## Auth model
@@ -50,7 +54,7 @@ Never let Terraform destroy-and-recreate a stateful resource.
 ```
 infra/
 ├── versions.tf      # terraform >=1.5 (import blocks) + google ~>6.0
-├── backend.tf       # gcs backend (bucket {project}-tf-state, prefix susep/)
+├── backend.tf       # gcs backend (bucket via -backend-config; prefix susep/)
 ├── providers.tf     # google provider (ADC auth)
 ├── variables.tf     # inputs; defaults mirror current infra
 ├── terraform.tfvars.example

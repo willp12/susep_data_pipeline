@@ -231,5 +231,6 @@ reports/
 *.tfstate
 *.tfstate.*
 infra/terraform.tfvars
+infra/backend.hcl
 crash.log
 crash.*.log
