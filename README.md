@@ -86,6 +86,25 @@ Pontos de desenho:
   (multi-turn) compartilham tools, gate, glossário, histórico e o toggle de
   provider — Claude API ou LM Studio local.
 
+## Exemplo de output
+
+Um relatório real gerado pelo agente sobre os dados públicos da SUSEP, com a
+análise separada do SQL que a sustenta:
+
+- 📄 **[Relatório de insights](docs/example-report.md)** — a análise em markdown
+- 🔎 **[Apêndice de queries](docs/example-queries.sql.md)** — o SQL por trás de cada número (citado por `query_no`)
+
+Trecho do sumário executivo (modo _novo ângulo_):
+
+> A previdência privada (PGBL/VGBL) reportada no campo `premio_emitido_cap` do
+> SES movimentou R$ 194 bi em 2024 — volume equivalente a **todo o mercado de
+> seguros convencional** — e contraiu -18,7% em 2025, com a queda concentrada
+> no segundo semestre.
+
+A cada execução o agente escolhe um modo (aprofundar um fio de um report
+anterior ou abrir um ângulo novo), cita as queries por número e publica análise
++ apêndice + run log no bucket GCS.
+
 ## Setup local
 
 ### Pré-requisitos
