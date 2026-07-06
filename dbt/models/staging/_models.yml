@@ -1,7 +1,7 @@
 version: 2
 
 # Column descriptions here are the glossary the insights agent reads (via
-# `dbt docs generate` → target/manifest.json). First-pass definitions based on
+# `dbt parse` → target/manifest.json). First-pass definitions based on
 # the SUSEP SES layout — verify against the official data dictionary at
 # https://www2.susep.gov.br/menuestatistica/SES/principal.aspx and refine over
 # time. The agent leans on these to interpret columns, so wrong text here means

@@ -1,6 +1,6 @@
 """Build the column glossary the agent reads, sourced from dbt docs.
 
-``dbt docs generate`` writes ``dbt/target/manifest.json`` with the model and
+``dbt parse`` writes ``dbt/target/manifest.json`` with the model and
 source descriptions defined in ``_models.yml``. We flatten the relevant nodes
 into compact markdown that gets appended to the system prompt, so the agent
 interprets columns from the project's own documentation rather than guessing
@@ -21,7 +21,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _REPO_ROOT / "dbt" / "target" / "manifest.json"
 
 _FALLBACK = (
-    "(dbt glossary unavailable — run `dbt docs generate` to populate it. "
+    "(dbt glossary unavailable — run `dbt parse` to populate it. "
     "Use the describe_table tool to inspect columns directly.)"
 )
 

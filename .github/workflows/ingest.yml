@@ -21,7 +21,7 @@ permissions:
   contents: read # checkout only
   actions: write # dispatch insights.yml on a new period
 
-# One ingest at a time — it writes to S3/BQ and rebuilds the marts. A queued
+# One ingest at a time — it writes to GCS/BQ and rebuilds the marts. A queued
 # run waits rather than racing a running one.
 concurrency:
   group: ingest

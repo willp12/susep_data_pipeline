@@ -1,7 +1,7 @@
 """Bronze step: raw zip in GCS → extracted CSV → parquet in GCS bronze/.
 
 For the MVP we only extract **one** CSV from the zip — ``ses_seguros.csv`` —
-per the project scope in CLAUDE.md. Other CSVs in the zip are Phase 2.
+per the project scope. Other CSVs in the zip are Phase 2.
 
 Encoding + format (confirmed with the owner, not guessed):
     separator = ';'
@@ -45,7 +45,7 @@ from src.storage import gcs
 
 log = structlog.get_logger(__name__)
 
-# SUSEP ships the file as "Ses_seguros.csv" (capitalised). CLAUDE.md had it
+# SUSEP ships the file as "Ses_seguros.csv" (capitalised). An earlier note had it
 # lowercase; the real zip we downloaded settles the question.
 TARGET_CSV_NAME = "Ses_seguros.csv"
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -101,7 +101,7 @@ def _read_csv(utf8_path: Path) -> pl.DataFrame:
     """Read the SUSEP CSV preserving every column as String.
 
     Bronze is the raw-ish layer — typing belongs in dbt staging
-    (``stg_ses_seguros`` per CLAUDE.md). Reading as String also side-steps
+    (``stg_ses_seguros``). Reading as String also side-steps
     polars' schema inference on 10k sample rows, which can't see later rows
     that flip an inferred ``i64`` to a float (first run here tripped on
     ``consorciosefundos`` at row >10k with value ``108252392,92``).

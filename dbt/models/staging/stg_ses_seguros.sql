@@ -13,7 +13,7 @@
    Deliberately *not* doing here:
      * null-standardisation (empty-string vs NULL) — bronze already reads
        empty cells as NULL.
-     * cross-table enrichment — that's silver/gold (Fase 3).
+     * cross-table enrichment — that's silver/gold (out of scope).
 #}
 
 select

@@ -1,6 +1,6 @@
 """Provider selection for SDK-spawned agent processes.
 
-Shared by the daily insights agent (src.agent.main) and the interactive chat
+Shared by the weekly insights agent (src.agent.main) and the interactive chat
 (src.chat): both run the same Claude Agent SDK against either the Anthropic
 API or LM Studio's Anthropic-compatible endpoint.
 """

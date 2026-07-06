@@ -1,6 +1,6 @@
 """Expose the read-only BQ functions as in-process Claude Agent SDK tools.
 
-The plain functions live in ``src.agent.tools`` (CP-B, fully unit-tested). Here
+The plain functions live in ``src.agent.tools`` (fully unit-tested). Here
 we wrap each as an ``@tool`` and bundle them into an SDK MCP server. Keeping the
 wrapping this thin means the SDK layer has almost no logic to test — the cost
 guardrails and serialisation already live (and are tested) underneath.

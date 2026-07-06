@@ -5,13 +5,14 @@ pass, and publishes the artifacts (analysis, SQL appendix, run log) to the GCS
 reports bucket — the source of truth. Local copies under `reports/` are scratch
 only (salvage if the upload fails).
 
-Run locally (needs ANTHROPIC_API_KEY in .env and the `claude` CLI installed):
+Run locally (needs an agent provider in .env — ANTHROPIC_API_KEY,
+CLAUDE_CODE_OAUTH_TOKEN, or AGENT_PROVIDER=local — plus the `claude` CLI):
 
     uv run python -m src.agent.main
 
-Guardrails: a default-deny tool gate (only the three BQ tools may run), a turn
-cap and a USD budget cap — both from config — on top of the per-query byte cap
-already enforced in run_sql.
+Guardrails: a default-deny tool gate (only the read-only BQ tools may run), a
+turn cap and a USD budget cap — both from config — on top of the per-query byte
+cap already enforced in run_sql.
 """
 
 from __future__ import annotations

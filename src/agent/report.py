@@ -1,4 +1,4 @@
-"""Render the agent's daily report and keep a local scratch copy.
+"""Render the agent's weekly report and keep a local scratch copy.
 
 The agent returns the report body wrapped in ===REPORT START===/===REPORT END===
 markers. We extract that and prepend a YAML frontmatter block with run metadata

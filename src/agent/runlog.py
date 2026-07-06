@@ -3,7 +3,7 @@
 The collector is a structlog processor: registered in the processor chain
 (after ``add_log_level``/``TimeStamper``, so their fields are present), it
 keeps a JSON line per event and passes the event through untouched. At the
-end of the run the publisher uploads the buffer to ``logs/<stem>.jsonl``.
+end of the run the publisher uploads the buffer to ``logs/<year>/<stem>.jsonl``.
 
 Module-level singleton: the agent process drives exactly one run.
 """

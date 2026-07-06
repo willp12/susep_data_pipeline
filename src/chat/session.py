@@ -1,13 +1,13 @@
 """Multi-turn analyst chat over the published reports and BigQuery.
 
 Wraps ``ClaudeSDKClient`` (the Agent SDK's interactive client — unlike the
-one-shot ``query()`` the daily agent uses, it keeps the session alive across
+one-shot ``query()`` the weekly agent uses, it keeps the session alive across
 questions, so follow-ups see the whole conversation and prior tool results).
 Reuses the agent's stack wholesale: the BQ/read_report tools and default-deny
 gate from ``sdk_tools``, the manifest history digest, the dbt glossary and the
 anthropic/local provider toggle.
 
-The UI layer (CLI now, Streamlit later) consumes ``ask()`` as a stream of
+The UI layer (CLI and Streamlit) consumes ``ask()`` as a stream of
 ``ChatEvent``s: assistant text, tool-call notices, and the per-question result
 (cost). Keeping this module UI-agnostic is what lets the interface change
 without touching the agent wiring.

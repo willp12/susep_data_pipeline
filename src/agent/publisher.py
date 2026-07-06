@@ -1,6 +1,6 @@
 """Publish agent outputs to the GCS reports bucket — the source of truth.
 
-Layout in the bucket (see bootstrap 04):
+Layout in the bucket:
 
     manifest.json                      # index: one entry per published run
     reports/2026/2026-06-09.md         # analysis only
@@ -51,7 +51,7 @@ class ReportStore:
         if not self.bucket_name:
             raise RuntimeError(
                 "Reports bucket not configured — set GCP_PROJECT_ID (or "
-                "GCP_REPORTS_BUCKET) in .env and run scripts/bootstrap/04_gcp_gcs_reports.sh."
+                "GCP_REPORTS_BUCKET) in .env, then run 'cd infra && terraform apply'."
             )
         self._client = client or storage.Client(project=settings.gcp_project_id or None)
         self._bucket = self._client.bucket(self.bucket_name)

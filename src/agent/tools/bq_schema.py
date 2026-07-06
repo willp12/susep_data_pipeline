@@ -1,7 +1,7 @@
 """describe_table — return a table's schema + metadata, no query, no cost.
 
 Uses ``Client.get_table`` (a metadata GET), so the agent can learn the shape
-of a table and read column descriptions (sourced from dbt docs in CP-C)
+of a table and read column descriptions (sourced from dbt docs)
 without spending any BigQuery bytes.
 """
 

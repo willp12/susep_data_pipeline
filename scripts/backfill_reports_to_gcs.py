@@ -1,6 +1,6 @@
 """One-off backfill: upload the repo's committed reports to the GCS bucket.
 
-Usage (after running scripts/bootstrap/04_gcp_gcs_reports.sh):
+Usage (after provisioning the reports bucket with 'cd infra && terraform apply'):
 
     uv run python scripts/backfill_reports_to_gcs.py [--reports-dir reports]
 

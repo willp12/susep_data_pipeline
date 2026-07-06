@@ -5,7 +5,7 @@ sibling appendix built deterministically from the run_sql query log (see
 ``sdk_tools.QueryLogEntry``) — the model never writes the appendix itself.
 Insights cite queries by ``query_no``, which is the 1-based execution order.
 
-Local layout (mirrors the future GCS layout): ``reports/queries/<stem>.sql.md``
+Local scratch layout: ``reports/queries/<stem>.sql.md``
 next to ``reports/<stem>.md``.
 """
 
@@ -65,7 +65,7 @@ def write_queries_appendix(
     reports_dir: Path | None = None,
 ) -> Path:
     """Write ``queries/<stem>.sql.md``. The stem is already unique per run
-    (write_report's non-overwrite suffix), so a plain write is safe."""
+    (the publisher's non-overwrite suffix), so a plain write is safe."""
     target_dir = (reports_dir or _REPORTS_DIR) / "queries"
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"{report_stem}.sql.md"

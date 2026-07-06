@@ -33,7 +33,7 @@ class Settings(BaseModel):
         default="https://www2.susep.gov.br/menuestatistica/SES/principal.aspx"
     )
 
-    # Insights agent (CP-C). The API key is read but never logged.
+    # Insights agent. The API key is read but never logged.
     anthropic_api_key: str = Field(default="")
     # Subscription auth (claude setup-token, Pro/Max): when set, agent runs
     # bill the Claude subscription instead of API credits and this token wins

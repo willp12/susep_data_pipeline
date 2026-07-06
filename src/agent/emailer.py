@@ -1,4 +1,4 @@
-"""E-mail delivery of the daily report (Brevo transactional API).
+"""E-mail delivery of the weekly report (Brevo transactional API).
 
 The e-mail is the human review channel now that reports go straight to GCS
 instead of a PR: HTML body rendered from the analysis markdown, with the raw
