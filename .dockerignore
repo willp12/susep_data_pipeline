@@ -1,0 +1,43 @@
+# Minimal build context: only pyproject.toml, uv.lock, README.md, src/ and
+# dbt/ enter the image (see Dockerfile). Excluding the rest speeds up the
+# build and keeps local artifacts, data and secrets out by accident.
+.git
+.github
+.claude
+.venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+# Live secrets must never enter the build context.
+.env
+.env.example
+# `**/` because in .dockerignore `*` doesn't cross `/` — without it only the
+# root level would be excluded and nested artifacts (src/**/__pycache__)
+# would slip into the COPY.
+**/__pycache__
+**/*.pyc
+docs
+infra
+tests
+scripts
+dags
+reports
+# Local dbt artifacts — target/logs are ephemeral run outputs (the glossary
+# manifest is rebuilt by `dbt parse` inside the run_insights task).
+dbt/target
+dbt/logs
+dbt/.user.yml
+# Data files never enter the image (recursive, at any level)...
+**/*.parquet
+**/*.csv
+**/*.zip
+# ...except the dbt seed, which `dbt build` (seeds) needs at runtime.
+!dbt/seeds/*.csv
+# Misc repo housekeeping the build doesn't need. README.md stays IN the
+# context: hatchling requires it (readme = "README.md" in [project]).
+Makefile
+LICENSE
+toolbox.exe
+.pre-commit-config.yaml
+.gitattributes
+.gitignore

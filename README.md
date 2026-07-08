@@ -380,6 +380,47 @@ susep-ses-pipeline/
 └── pyproject.toml
 ```
 
+## Orchestration (self-hosted Airflow)
+
+The weekly run also exists as the **`susep_weekly`** DAG on the self-hosted
+[Airflow platform](https://github.com/willp12/airflow) (GCP Spot VM,
+DockerOperator) — see that repo's `docs/integration-guide.md` for the
+integration contract.
+
+- **Deploy** — `.github/workflows/deploy.yml`: on every push to `main` it
+  builds the task image from this repo's `Dockerfile` (pushed to Artifact
+  Registry as `pipelines/susep_data_pipeline:latest` + `:git-sha`) and rsyncs
+  `dags/` to the platform's DAGs bucket (`dags/susep_data_pipeline/`). It
+  authenticates with the platform's WIF pair — repo *variables*
+  `GCP_AIRFLOW_WIF_PROVIDER` / `GCP_AIRFLOW_DEPLOYER_SA` — distinct from the
+  `GCP_WIF_PROVIDER`/`GCP_AGENT_SA` *secrets* that belong to `insights.yml`.
+- **DAG** — `dags/susep.py`: `run_pipeline >> insights_gate >> run_insights`,
+  both tasks on the same image (`uv run python -m src.main`; then `dbt parse`
+  + `python -m src.agent.main`). The explicit dependency replaces the fragile
+  2-hour gap between the two GitHub Actions crons: the agent runs iff the
+  ingest succeeded.
+- **Parallel-run status** — the GitHub Actions crons (`ingest.yml`,
+  `insights.yml`) remain the production schedulers for now. The DAG runs
+  Mondays **15:00 UTC** (3 h after the GH ingest, so the two never overlap);
+  its ingest no-ops cheaply on the unchanged SUSEP hash, and the insights task
+  defaults **off** (`params.insights=false`) so the weekly report and e-mail
+  aren't duplicated — manual validation runs pass `{"insights": true}`. At
+  cutover: remove `schedule:` from both workflows (keep `workflow_dispatch`
+  as a fallback), revert the DAG cron to `0 12 * * 1` and flip the insights
+  default to `true`.
+- **Secrets** — resolved at runtime from GCP Secret Manager through the
+  Airflow secrets backend (`{{ var.value.anthropic_api_key }}`,
+  `claude_code_oauth_token`, `brevo_api_key`); nothing in DAG code or baked
+  into the image. The report e-mail addresses are not secrets and are
+  hardcoded in the DAG.
+- **Single-SA trade-off** — CI keeps the least-privilege split (insights runs
+  as the read-only `bq-agent-readonly` via WIF; ingest as `susep-ingest`).
+  On Airflow, both tasks run as the VM's single SA (`airflow-vm@`, ADC from
+  the metadata server, no key files; data-side grants live in `infra/`), so
+  the insights task technically holds write access it doesn't need. Accepted
+  for a solo-maintained platform; the documented hardening path is per-task
+  service accounts via SA impersonation inside the containers.
+
 ## Fora de escopo (por ora)
 
 - Demais CSVs de fato do zip (resseguros, capitalização, previdência…); as

@@ -1,0 +1,86 @@
+name: deploy
+
+# Publishes the Airflow runtime artifacts on every push to main:
+#   1. Dockerfile  -> Artifact Registry (pipelines/susep_data_pipeline:latest + :git-sha)
+#   2. dags/       -> gs://PROJECT-airflow-dags/dags/susep_data_pipeline/ (the VM syncs every 60 s)
+#
+# Mirrors the deploy contract of github.com/willp12/airflow — see that repo's
+# docs/integration-guide.md for the full integration contract.
+#
+# Repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   GCP_PROJECT_ID            — GCP project id (already exists, shared with the other workflows)
+#   GCP_AIRFLOW_WIF_PROVIDER  — airflow repo: terraform output wif_provider
+#   GCP_AIRFLOW_DEPLOYER_SA   — airflow repo: terraform output deployer_sa_email
+# (The GCP_WIF_PROVIDER/GCP_AGENT_SA *secrets* belong to insights.yml's own
+# read-only WIF pool — do not confuse: this deploy uses the Airflow platform's
+# identity, hence the GCP_AIRFLOW_* variable names.)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "dbt/**"
+      - "dags/**"
+      - "Dockerfile"
+      - ".dockerignore" # affects the build context
+      - "README.md" # build-context input: the Dockerfile COPYs it (hatchling readme metadata)
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# One deploy at a time, without cancelling a running one: two pushes in a row
+# must not finish out of order and leave :latest/the bucket on the older commit.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # WIF auth to GCP
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Fixed assumption: us-central1 region and the platform's default names.
+  # If they ever change, take the real values from the airflow repo via
+  # `terraform output artifact_registry_url / dags_bucket`.
+  REGISTRY: us-central1-docker.pkg.dev
+  IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/pipelines/susep_data_pipeline
+  DAGS_BUCKET: ${{ vars.GCP_PROJECT_ID }}-airflow-dags
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_AIRFLOW_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_AIRFLOW_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and push the susep_data_pipeline image
+        run: |
+          docker buildx build . \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:${{ github.sha }}" \
+            --push
+
+      # --delete-unmatched-destination-objects keeps the bucket an exact
+      # mirror of the repo: a DAG deleted here disappears from the VM in ~60 s.
+      # Scoped to this repo's subdirectory — each repo owns dags/<repo>/.
+      - name: Sync DAGs to the bucket
+        run: |
+          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+            dags/ "gs://${DAGS_BUCKET}/dags/susep_data_pipeline/"
