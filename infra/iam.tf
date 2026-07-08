@@ -8,6 +8,9 @@
 locals {
   agent_sa_email  = "${var.agent_sa_account_id}@${var.project_id}.iam.gserviceaccount.com"
   ingest_sa_email = "${var.ingest_sa_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  # Owned by the willp12/airflow repo's terraform; granted here because data
+  # grants live with the data owner (this repo).
+  airflow_sa_email = "airflow-vm@${var.project_id}.iam.gserviceaccount.com"
 }
 
 # --- Service accounts -------------------------------------------------------

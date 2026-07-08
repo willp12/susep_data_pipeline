@@ -49,6 +49,17 @@ resource "google_bigquery_dataset_iam_member" "agent_reader" {
   member     = "serviceAccount:${local.agent_sa_email}"
 }
 
+# Airflow VM SA (repo willp12/airflow): runs the same pipeline as containers
+# (DAG susep_weekly). One SA covers both ingest (write) and insights there —
+# the ingest/agent split above remains the CI story; splitting the Airflow
+# tasks across SAs via impersonation is documented as future hardening.
+resource "google_bigquery_dataset_iam_member" "airflow_writer" {
+  for_each   = local.datasets
+  dataset_id = each.value
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${local.airflow_sa_email}"
+}
+
 import {
   for_each = local.datasets
   to       = google_bigquery_dataset.this[each.key]
