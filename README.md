@@ -411,8 +411,10 @@ integration contract.
 - **Secrets** — resolved at runtime from GCP Secret Manager through the
   Airflow secrets backend (`{{ var.value.anthropic_api_key }}`,
   `claude_code_oauth_token`, `brevo_api_key`); nothing in DAG code or baked
-  into the image. The report e-mail addresses are not secrets and are
-  hardcoded in the DAG.
+  into the image. The report e-mail addresses resolve the same way
+  (`report_email_to` / `report_email_from`, empty fallback — the e-mail
+  steps log+skip while unset): not secrets, but operator PII kept out of
+  the repo.
 - **Single-SA trade-off** — CI keeps the least-privilege split (insights runs
   as the read-only `bq-agent-readonly` via WIF; ingest as `susep-ingest`).
   On Airflow, both tasks run as the VM's single SA (`airflow-vm@`, ADC from

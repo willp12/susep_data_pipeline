@@ -36,7 +36,10 @@ The explicit run_pipeline >> run_insights dependency replaces the fragile
 Auth: ADC from the VM metadata server (SA airflow-vm@) — no key files; the
 data-side grants (datasets + buckets) live in this repo's infra/. Secrets
 resolve at runtime from Secret Manager via {{ var.value.* }} — never in DAG
-code. The report e-mail addresses are not secrets and are hardcoded below.
+code. The report e-mail addresses resolve the same way (report_email_to /
+report_email_from, empty fallback): not secrets, but operator PII kept out of
+a public repo. While unset, every e-mail step logs+skips (delivery is
+best-effort by design) — nothing else in the run is affected.
 """
 
 from __future__ import annotations
@@ -52,17 +55,14 @@ from airflow.sdk import DAG, Param
 PROJECT_ID = os.environ["GCP_PROJECT_ID"]  # injected into the scheduler by the stack
 IMAGE = f"us-central1-docker.pkg.dev/{PROJECT_ID}/pipelines/susep_data_pipeline:latest"
 
-REPORT_EMAIL_TO = "31415008+willp12@users.noreply.github.com"
-REPORT_EMAIL_FROM = "31415008+willp12@users.noreply.github.com"  # Brevo-verified sender
-
 # Same env as the ingest.yml job (incl. the optional Brevo notice e-mail,
 # which src.main skips when unset). ADC comes from the metadata server.
 PIPELINE_ENV = {
     "GCP_PROJECT_ID": PROJECT_ID,
     "GCP_BQ_LOCATION": "US",
     "BREVO_API_KEY": "{{ var.value.brevo_api_key }}",
-    "REPORT_EMAIL_TO": REPORT_EMAIL_TO,
-    "REPORT_EMAIL_FROM": REPORT_EMAIL_FROM,
+    "REPORT_EMAIL_TO": "{{ var.value.get('report_email_to', '') }}",
+    "REPORT_EMAIL_FROM": "{{ var.value.get('report_email_from', '') }}",
 }
 
 # Same env as the insights.yml job: the subscription OAuth token wins over the
@@ -82,8 +82,8 @@ INSIGHTS_ENV = {
     # opaque exit 137 that gets retried twice to no avail.
     "NODE_OPTIONS": "--max-old-space-size=768",
     "BREVO_API_KEY": "{{ var.value.brevo_api_key }}",
-    "REPORT_EMAIL_TO": REPORT_EMAIL_TO,
-    "REPORT_EMAIL_FROM": REPORT_EMAIL_FROM,
+    "REPORT_EMAIL_TO": "{{ var.value.get('report_email_to', '') }}",
+    "REPORT_EMAIL_FROM": "{{ var.value.get('report_email_from', '') }}",
 }
 
 COMMON = dict(
