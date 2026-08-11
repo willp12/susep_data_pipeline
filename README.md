@@ -2,60 +2,64 @@
 
 [![CI](https://github.com/willp12/susep_data_pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/willp12/susep_data_pipeline/actions/workflows/ci.yml)
 
-Pipeline de engenharia de dados que ingere estatísticas públicas do
-[SUSEP SES](https://www2.susep.gov.br/menuestatistica/SES/principal.aspx) para
-BigQuery, usando GCS como storage intermediário e dbt para transformações.
+**English** · [Português (BR)](README.pt-BR.md)
 
-> **Status:** ativo — ingestão e report de insights semanais via GitHub Actions;
-> chat analítico local; infra em Terraform.
+Data-engineering pipeline that ingests public statistics from
+[SUSEP SES](https://www2.susep.gov.br/menuestatistica/SES/principal.aspx) —
+the statistics system of Brazil's private-insurance regulator — into BigQuery,
+using GCS as intermediate storage and dbt for transformations.
+
+> **Status:** active — weekly ingestion and insights report via GitHub Actions;
+> local analyst chat; Terraform-managed infra; a self-hosted Airflow DAG runs
+> in parallel (see [Orchestration](#orchestration-self-hosted-airflow)).
 
 ## Stack
 
-- Python 3.12 (exato)
-- [uv](https://docs.astral.sh/uv/) como package manager
+- Python 3.12 (exact)
+- [uv](https://docs.astral.sh/uv/) as package manager
 - httpx + selectolax (scraping)
-- polars (processamento CSV)
+- polars (CSV processing)
 - google-cloud-bigquery + google-cloud-storage (single-cloud: GCP only)
 - dbt-core / dbt-bigquery (>=1.11,<1.12)
 - pydantic v2, structlog
-- [Claude Agent SDK](https://docs.anthropic.com/en/api/agent-sdk) (agente de insights + chat)
-- Streamlit (UI do chat) · Brevo (e-mail transacional) · Tavily (notícias, opcional)
-- Terraform (infra GCP: datasets, buckets, service accounts, IAM, WIF)
+- [Claude Agent SDK](https://docs.anthropic.com/en/api/agent-sdk) (insights agent + chat)
+- Streamlit (chat UI) · Brevo (transactional e-mail) · Tavily (news, optional)
+- Terraform (GCP infra: datasets, buckets, service accounts, IAM, WIF)
 - ruff, mypy, pre-commit, pytest
 
-## Arquitetura
+## Architecture
 
-O fluxo segue o lifecycle de engenharia de dados — geração → ingestão →
-armazenamento → transformação → serving:
+The flow follows the data-engineering lifecycle — generation → ingestion →
+storage → transformation → serving:
 
 ```mermaid
 flowchart LR
-    subgraph GER["Geração"]
-        SUSEP["Site SUSEP SES<br/>(zip mensal)"]
+    subgraph GER["Generation"]
+        SUSEP["SUSEP SES website<br/>(monthly zip)"]
     end
 
-    subgraph ING["Ingestão<br/>(semanal: ingest.yml · ou make run)"]
-        PIPE["src/main.py<br/>scraper · pré-check ·<br/>downloader · unzip → parquet"]
+    subgraph ING["Ingestion<br/>(weekly: ingest.yml · or make run)"]
+        PIPE["src/main.py<br/>scraper · pre-check ·<br/>downloader · unzip → parquet"]
     end
 
-    subgraph ARM["Armazenamento"]
+    subgraph ARM["Storage"]
         S3[("GCS {project}-susep-ses-data<br/>raw zip + parquet")]
         BRZ[("BigQuery bronze<br/>ses_seguros · dims ·<br/>ingestion_log")]
     end
 
-    subgraph TRA["Transformação<br/>(dbt build)"]
+    subgraph TRA["Transformation<br/>(dbt build)"]
         STG[("staging<br/>stg_ses_seguros")]
-        FCT[("marts<br/>fct_seguros + dims<br/>nomes oficiais · CNSeg · premio_emitido")]
+        FCT[("marts<br/>fct_seguros + dims<br/>official names · CNSeg · premio_emitido")]
     end
 
     subgraph SRV["Serving — analytics"]
-        RUN["Agente de insights<br/>semanal, GitHub Actions<br/>(WIF + SA read-only)"]
+        RUN["Insights agent<br/>weekly, GitHub Actions<br/>(WIF + read-only SA)"]
         GCS[("GCS reports bucket<br/>reports · queries · logs ·<br/>manifest.json")]
         MAIL["E-mail<br/>(Brevo API)"]
-        CHAT["Chat analítico<br/>local, multi-turn<br/>(make chat)"]
+        CHAT["Analyst chat<br/>local, multi-turn<br/>(make chat)"]
     end
 
-    LLM["Provider LLM (AGENT_PROVIDER):<br/>Anthropic API ou LM Studio local"]
+    LLM["LLM provider (AGENT_PROVIDER):<br/>Anthropic API or local LM Studio"]
 
     SUSEP --> PIPE
     PIPE --> S3
@@ -63,320 +67,331 @@ flowchart LR
     BRZ --> STG
     STG --> FCT
 
-    FCT -->|"tools read-only<br/>run_sql ≤ 1 GiB"| RUN
-    FCT -->|"tools read-only"| CHAT
-    RUN -->|"análise + SQL + log"| GCS
+    FCT -->|"read-only tools<br/>run_sql ≤ 1 GiB"| RUN
+    FCT -->|"read-only tools"| CHAT
+    RUN -->|"analysis + SQL + log"| GCS
     RUN --> MAIL
-    GCS -.->|"digest do manifest<br/>(continuidade)"| RUN
+    GCS -.->|"manifest digest<br/>(continuity)"| RUN
     GCS -.->|"digest + read_report"| CHAT
 
-    PIPE -.->|"período novo<br/>dispara report"| RUN
+    PIPE -.->|"new period<br/>triggers report"| RUN
 
     LLM -.- RUN
     LLM -.- CHAT
 ```
 
-Pontos de desenho:
+Design points:
 
-- **`fct_seguros` é o contrato**: agente e chat leem preferencialmente o fato
-  curado (dedup embutido, nomes oficiais via dims, métricas pré-computadas).
-- **O bucket GCS é a fonte de verdade dos reports** — nada de report no git; o
-  `manifest.json` (datas + títulos) dá memória/continuidade barata aos runs.
-- **Mesmo núcleo, dois modos**: o agente semanal (one-shot) e o chat
-  (multi-turn) compartilham tools, gate, glossário, histórico e o toggle de
-  provider — Claude API ou LM Studio local.
+- **`fct_seguros` is the contract**: the agent and the chat preferentially read
+  the curated fact table (built-in dedup, official names via the dims,
+  pre-computed metrics).
+- **The GCS bucket is the source of truth for reports** — no reports in git;
+  `manifest.json` (dates + titles) gives runs cheap memory/continuity.
+- **Same core, two modes**: the weekly agent (one-shot) and the chat
+  (multi-turn) share tools, gate, glossary, history and the provider toggle —
+  Claude API or local LM Studio.
 
-## Exemplo de output
+## Example output
 
-Um relatório real gerado pelo agente sobre os dados públicos da SUSEP, com a
-análise separada do SQL que a sustenta:
+A real report generated by the agent on SUSEP's public data, with the analysis
+kept separate from the SQL that backs it (both artifacts are written in
+Portuguese, the language of the underlying market):
 
-- 📄 **[Relatório de insights](docs/example-report.md)** — a análise em markdown
-- 🔎 **[Apêndice de queries](docs/example-queries.sql.md)** — o SQL por trás de cada número (citado por `query_no`)
+- 📄 **[Insights report](docs/example-report.md)** — the analysis, in markdown
+- 🔎 **[Query appendix](docs/example-queries.sql.md)** — the SQL behind every number (cited by `query_no`)
 
-Trecho do sumário executivo (modo _novo ângulo_):
+Excerpt from the executive summary (_new angle_ mode; translated):
 
-> A previdência privada (PGBL/VGBL) reportada no campo `premio_emitido_cap` do
-> SES movimentou R$ 194 bi em 2024 — volume equivalente a **todo o mercado de
-> seguros convencional** — e contraiu -18,7% em 2025, com a queda concentrada
-> no segundo semestre.
+> Private pension products (PGBL/VGBL) reported in the SES field
+> `premio_emitido_cap` moved R$ 194 bn in 2024 — a volume equivalent to **the
+> entire conventional insurance market** — and contracted −18.7% in 2025, with
+> the drop concentrated in the second half.
 
-A cada execução o agente escolhe um modo (aprofundar um fio de um report
-anterior ou abrir um ângulo novo), cita as queries por número e publica análise
-+ apêndice + run log no bucket GCS.
+On every run the agent picks a mode (deep-dive on a thread from a previous
+report, or a brand-new angle), cites queries by number and publishes analysis
++ appendix + run log to the GCS bucket.
 
-## Setup local
+## Local setup
 
-### Pré-requisitos
+### Prerequisites
 
-1. **Python 3.12** — o `uv` cuida de instalar caso não esteja presente.
-2. **uv** — instalar conforme [docs oficiais](https://docs.astral.sh/uv/).
-3. **Google Cloud SDK** — `gcloud --version` deve responder.
+1. **Python 3.12** — `uv` installs it automatically if missing.
+2. **uv** — install per the [official docs](https://docs.astral.sh/uv/).
+3. **Google Cloud SDK** — `gcloud --version` must respond.
 
-### Instalação
+### Installation
 
 ```bash
-# Clone e entra no diretório
+# Clone and enter the directory
 git clone https://github.com/willp12/susep_data_pipeline.git
 cd susep_data_pipeline
 
-# Sincroniza dependências (cria .venv automaticamente) e instala pre-commit
+# Sync dependencies (creates .venv automatically) and install pre-commit
 make install
 
-# Ou manualmente:
+# Or manually:
 uv sync --all-groups
 uv run pre-commit install
 ```
 
-### Validação do ambiente
+### Environment check
 
-Após `uv sync`, rode:
+After `uv sync`, run:
 
 ```bash
 uv run python -c "import dbt.version; print(dbt.version.__version__)"
 uv run python -c "import polars; print(polars.__version__)"
 ```
 
-Ambos devem rodar sem erro. Se houver conflito de `pyarrow`/`protobuf` entre
-polars e dbt-bigquery, abra uma issue.
+Both must run without errors. If there is a `pyarrow`/`protobuf` conflict
+between polars and dbt-bigquery, open an issue.
 
-## Primeira execução (infra)
+## First run (infra)
 
-A infra é **Terraform** (`infra/`) — datasets, buckets, service accounts, IAM e
-WIF. Ver [`infra/README.md`](infra/README.md):
+The infra is **Terraform** (`infra/`) — datasets, buckets, service accounts,
+IAM and WIF. See [`infra/README.md`](infra/README.md):
 
 ```bash
-bash infra/scripts/create-state-bucket.sh   # uma vez (bucket de state)
+bash infra/scripts/create-state-bucket.sh   # once (state bucket)
 cd infra && terraform init && terraform apply
 ```
 
-Um **bootstrap residual** cobre só o que o Terraform não gerencia (preflight,
-habilitar APIs, e a tabela `ingestion_log` — cujo schema evolui com o código):
+A **residual bootstrap** covers only what Terraform doesn't manage (preflight,
+enabling APIs, and the `ingestion_log` table — whose schema evolves with the
+code):
 
-1. `gcloud auth application-default login` + `.env` com `GCP_PROJECT_ID`.
-2. `make bootstrap` (ou `bash scripts/bootstrap/run_all.sh`).
+1. `gcloud auth application-default login` + `.env` with `GCP_PROJECT_ID`.
+2. `make bootstrap` (or `bash scripts/bootstrap/run_all.sh`).
 
-| Script                    | O que faz                                                              |
+| Script                    | What it does                                                           |
 | ------------------------- | ---------------------------------------------------------------------- |
-| `00_preflight.sh`         | Valida GCP creds, `.env`, CLIs, e pede confirmação interativa.        |
-| `02_gcp_apis.sh`          | Habilita `bigquery.googleapis.com`, `storage.googleapis.com` e `iamcredentials.googleapis.com`. |
-| `03_gcp_bigquery.sh`      | Garante os datasets (idempotente, redundante com o Terraform por segurança) e a tabela `ingestion_log` (particionada por `ingestion_date`, clusterizada por `file_name`; converge colunas nullable novas como `period`/`generated_at`). **Nunca faz DELETE/DROP.** |
-| `run_all.sh`              | Roda `00 → 02 → 03`, para no primeiro erro.                            |
+| `00_preflight.sh`         | Validates GCP creds, `.env`, CLIs, and asks for interactive confirmation. |
+| `02_gcp_apis.sh`          | Enables `bigquery.googleapis.com`, `storage.googleapis.com` and `iamcredentials.googleapis.com`. |
+| `03_gcp_bigquery.sh`      | Ensures the datasets (idempotent, deliberately redundant with Terraform) and the `ingestion_log` table (partitioned by `ingestion_date`, clustered by `file_name`; converges new nullable columns such as `period`/`generated_at`). **Never does DELETE/DROP.** |
+| `run_all.sh`              | Runs `00 → 02 → 03`, stopping at the first error.                      |
 
-Os buckets de reports/dados, as SAs (`bq-agent-readonly`, `susep-ingest`) + IAM
-e o WIF migraram pro Terraform (antigos `04`/`05` removidos). Para rodar
-não-interativamente, setar `BOOTSTRAP_ASSUME_YES=1`.
+The reports/data buckets, the SAs (`bq-agent-readonly`, `susep-ingest`) + IAM
+and the WIF setup have moved to Terraform (the old `04`/`05` scripts were
+removed). For non-interactive runs, set `BOOTSTRAP_ASSUME_YES=1`.
 
-## Desenvolvimento
+## Development
 
-| Comando           | Descrição                                                  |
+| Command           | Description                                                |
 | ----------------- | ---------------------------------------------------------- |
-| `make install`    | Sincroniza dependências e instala hooks de pre-commit      |
+| `make install`    | Sync dependencies and install pre-commit hooks             |
 | `make lint`       | ruff check + ruff format --check + mypy                    |
-| `make fmt`        | Autoformata (ruff format + ruff --fix)                     |
-| `make test`       | Roda pytest                                                |
-| `make run`        | Executa a pipeline (`python -m src.main`)                  |
-| `make dbt-build`  | Roda `dbt build` no projeto `dbt/`                         |
-| `make bootstrap`  | Executa scripts de provisionamento de infra                |
+| `make fmt`        | Autoformat (ruff format + ruff --fix)                      |
+| `make test`       | Run pytest                                                 |
+| `make run`        | Run the pipeline (`python -m src.main`)                    |
+| `make dbt-build`  | Run `dbt build` on the `dbt/` project                      |
+| `make bootstrap`  | Run the infra provisioning scripts                         |
 
-## Agente de insights
+## Insights agent
 
-Um agente (Claude Agent SDK) que lê as tabelas do BigQuery e gera um relatório
-semanal de insights de negócio. Os artefatos vão pro **bucket GCS de reports**
-(análise, apêndice de queries e run log) e o report chega por **e-mail** pra
-revisão humana. Roda semanalmente via GitHub Actions (Opus; a base SUSEP
-atualiza ~mensalmente, então cadência diária só re-analisava dado parado);
-nada é commitado no repo.
+An agent (Claude Agent SDK) that reads the BigQuery tables and writes a weekly
+business-insights report. The artifacts go to the **GCS reports bucket**
+(analysis, query appendix and run log) and the report lands in your **inbox**
+for human review. It runs weekly on GitHub Actions (Opus; the SUSEP dataset
+updates ~monthly, so a daily cadence would just re-analyse stale data);
+nothing is committed to the repo.
 
-### Como funciona
+### How it works
 
-- **Fonte preferida:** `susep_ses_marts.fct_seguros` — fato curado (dedup do
-  snapshot mais recente embutido, métricas pré-computadas como `loss_ratio`,
-  particionado por mês). O agente pode descer pro staging/bronze pra drill-down.
-- **Nomes determinísticos:** a fct traz `branch_name`, `ramo_group_name`,
-  `entity_name` e `economic_group_name` (joins das `dim_*`), pra o agente não
-  inferir rótulos. As dims vêm das tabelas de domínio do SES, carregadas por
-  `uv run python -m src.bronze.unzip_dims <zip>`.
-- **Taxonomia CNSeg:** além do grupo de ramos SUSEP, a fct traz
-  `cnseg_segmento` / `cnseg_grupo_1` / `cnseg_grupo_2` (via `dim_cnseg`), um
-  de-para curado mantido no seed `dbt/seeds/cnseg_ramos.csv` — corte de mercado
-  paralelo ao da SUSEP. Atualize re-exportando a aba `De_Para_Ramos`.
-- **Prêmio emitido:** a coluna canônica `premio_emitido` = `premio_de_seguros`
-  + `premio_emitido_cap` (seguros + capitalização). `premio_emitido2` é o campo
-  cru da SUSEP, mantido só pra rastreabilidade.
-- **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (com dry-run
-  obrigatório + cap de ~1 GiB por query) e `read_report`.
-- **Análise separada do SQL:** o corpo do report contém só a análise, citando
-  queries por número (`query_no` retornado pelo `run_sql`). O apêndice
-  `reports/queries/<stem>.sql.md` é montado automaticamente a partir do log de
-  chamadas `run_sql` (incluindo rejeitadas/falhas) — nunca a partir do texto do
-  modelo.
-- **Glossário:** as descrições de coluna vêm do `dbt docs` (manifest gerado por
-  `dbt parse`), a partir dos `_models.yml`. Refine-os pra melhorar os insights.
-- **Janela:** foca nos últimos 3 anos de `periodo_ref`.
-- **Guardrails:** gate default-deny (só as tools acima), `max_turns` e
-  `max_budget_usd` (config), além do cap de bytes por query.
+- **Preferred source:** `susep_ses_marts.fct_seguros` — the curated fact table
+  (dedup of the latest snapshot built in, pre-computed metrics such as
+  `loss_ratio`, partitioned by month). The agent may drill down into
+  staging/bronze.
+- **Deterministic names:** the fct carries `branch_name`, `ramo_group_name`,
+  `entity_name` and `economic_group_name` (joins from the `dim_*` tables), so
+  the agent never has to guess labels. The dims come from the SES domain
+  tables, loaded by `uv run python -m src.bronze.unzip_dims <zip>`.
+- **CNSeg taxonomy:** besides SUSEP's own grouping of insurance lines, the fct
+  carries `cnseg_segmento` / `cnseg_grupo_1` / `cnseg_grupo_2` (via
+  `dim_cnseg`), a curated crosswalk maintained in the seed
+  `dbt/seeds/cnseg_ramos.csv` — a market cut parallel to SUSEP's. Update it by
+  re-exporting the `De_Para_Ramos` sheet.
+- **Written premium:** the canonical column `premio_emitido` =
+  `premio_de_seguros` + `premio_emitido_cap` (insurance + capitalization).
+  `premio_emitido2` is SUSEP's raw field, kept for traceability only.
+- **Tools (read-only):** `describe_table`, `sample_rows`, `run_sql` (mandatory
+  dry-run + ~1 GiB per-query cap) and `read_report`.
+- **Analysis separated from SQL:** the report body contains only the analysis,
+  citing queries by number (the `query_no` returned by `run_sql`). The
+  appendix `reports/queries/<stem>.sql.md` is assembled automatically from the
+  `run_sql` call log (including rejected/failed calls) — never from the
+  model's text.
+- **Glossary:** column descriptions come from `dbt docs` (manifest generated by
+  `dbt parse`), sourced from the `_models.yml` files. Refine them to improve
+  the insights.
+- **Window:** focuses on the last 3 years of `periodo_ref`.
+- **Guardrails:** default-deny gate (only the tools above), `max_turns` and
+  `max_budget_usd` (config), plus the per-query byte cap.
 
-### Memória entre runs (continuidade)
+### Cross-run memory (continuity)
 
-Cada run recebe um **digest** dos reports anteriores (datas + títulos dos
-insights) injetado no prompt, e pode puxar um report inteiro via `read_report`.
-A cada execução o agente escolhe um **modo** (declarado no sumário):
+Every run receives a **digest** of previous reports (dates + insight titles)
+injected into the prompt, and can pull a full report via `read_report`. On
+each run the agent picks a **mode** (declared in the summary):
 
-- **deep-dive** — aprofunda um fio de um report anterior, ou
-- **novo ângulo** — investiga algo ainda não coberto.
+- **deep-dive** — digs into a thread from a previous report, or
+- **new angle** — investigates something not yet covered.
 
-Repetir um achado com o mesmo enquadramento é proibido; só vale reabordar uma
-métrica se houver informação nova (novo mês, recorte, causa).
+Repeating a finding with the same framing is forbidden; revisiting a metric is
+only allowed when there is new information (a new month, a new cut, a cause).
 
-O histórico vem do **`manifest.json` do bucket GCS** (datas + títulos; 1 GET
-barato por run), e `read_report` baixa o report do bucket — um report publicado
-fica visível pro run seguinte imediatamente, sem esperar merge de PR. Reports
-antigos do repo entram no bucket via backfill one-off:
+The history comes from the **GCS bucket's `manifest.json`** (dates + titles;
+one cheap GET per run), and `read_report` downloads the report from the bucket
+— a published report is visible to the next run immediately, with no PR merge
+to wait for. Old in-repo reports enter the bucket via a one-off backfill:
 
 ```bash
-uv run python scripts/backfill_reports_to_gcs.py   # idempotente
+uv run python scripts/backfill_reports_to_gcs.py   # idempotent
 ```
 
-### Entrega por e-mail
+### E-mail delivery
 
-Depois de publicar no GCS, o run envia o report por e-mail via a API
-transacional do [Brevo](https://www.brevo.com): corpo HTML renderizado da
-análise + os `.md` (report e apêndice de queries) anexados. Configuração via
-env — `BREVO_API_KEY` (Brevo > SMTP & API > API keys), `REPORT_EMAIL_FROM`
-(remetente **verificado** no Brevo, em Senders & IPs) e `REPORT_EMAIL_TO`
-(aceita lista separada por vírgula). Se faltar qualquer um, o envio é
-**pulado** com warning; o envio é best-effort e nunca falha o run (o report já
-está publicado).
+After publishing to GCS, the run e-mails the report through
+[Brevo](https://www.brevo.com)'s transactional API: the analysis rendered as
+the HTML body + the `.md` files (report and query appendix) attached.
+Configured via env — `BREVO_API_KEY` (Brevo > SMTP & API > API keys),
+`REPORT_EMAIL_FROM` (a sender **verified** in Brevo, under Senders & IPs) and
+`REPORT_EMAIL_TO` (accepts a comma-separated list). If any of them is missing
+the send is **skipped** with a warning; delivery is best-effort and never
+fails the run (the report is already published).
 
-### Rodar localmente
+### Running locally
 
 ```bash
-# Pré-requisitos: ANTHROPIC_API_KEY (ou CLAUDE_CODE_OAUTH_TOKEN, ver abaixo)
-# no .env, CLI do Claude Code instalada e o bucket de reports criado
+# Prerequisites: ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN, see below)
+# in .env, the Claude Code CLI installed and the reports bucket created
 npm install -g @anthropic-ai/claude-code
-uv run dbt parse --project-dir dbt --profiles-dir dbt   # gera o glossário
-uv run python -m src.agent.main   # publica no GCS + cópia scratch em reports/
+uv run dbt parse --project-dir dbt --profiles-dir dbt   # builds the glossary
+uv run python -m src.agent.main   # publishes to GCS + scratch copy in reports/
 ```
 
-## Chat analítico
+## Analyst chat
 
-Um chat multi-turn (`src/chat/`) pra conversar sobre os reports publicados e
-aprofundar temas: o agente recebe o digest do manifest (datas + títulos),
-puxa reports inteiros via `read_report` (com o SQL do apêndice) e roda queries
-novas no BigQuery — mesmas tools, mesmo gate default-deny e mesmo toggle de
-provider (Anthropic ou LM Studio local) do agente semanal.
+A multi-turn chat (`src/chat/`) for talking about the published reports and
+digging deeper: the agent receives the manifest digest (dates + titles), pulls
+full reports via `read_report` (with the appendix SQL) and runs fresh BigQuery
+queries — same tools, same default-deny gate and same provider toggle
+(Anthropic or local LM Studio) as the weekly agent.
 
 ```bash
-make chat-ui     # interface web (Streamlit, http://localhost:8501)
-make chat        # ou o REPL no terminal: uv run python -m src.chat.cli
+make chat-ui     # web UI (Streamlit, http://localhost:8501)
+make chat        # or the terminal REPL: uv run python -m src.chat.cli
 ```
 
-Na UI: sidebar com os reports publicados (datas + títulos do manifest, botão
-**Explorar** pra puxar um report pra conversa), respostas com as tool calls
-visíveis (`read_report`, `run_sql`…), custo da sessão (provider anthropic) e
-**Nova conversa** pra zerar o contexto. A conversa vive numa `ChatSession`
-multi-turn por aba do navegador (ponte sync/async em `src/chat/bridge.py`).
+In the UI: a sidebar with the published reports (dates + titles from the
+manifest, an **Explore** button to pull a report into the conversation),
+answers with the tool calls visible (`read_report`, `run_sql`…), session cost
+(anthropic provider) and **New conversation** to reset the context. The
+conversation lives in a multi-turn `ChatSession` per browser tab (sync/async
+bridge in `src/chat/bridge.py`).
 
-Comandos no REPL: `/reports` (temas já cobertos), `/custo`, `/sair`.
-Guardrails: `CHAT_MAX_TURNS` por pergunta e `CHAT_MAX_BUDGET_USD` pra conversa
-inteira (só no provider anthropic; local é grátis). Pré-requisitos: bucket
-populado + credenciais GCP; `dbt parse` enriquece o glossário (opcional).
+REPL commands: `/reports` (topics already covered), `/custo` (session cost),
+`/sair` (quit). Guardrails: `CHAT_MAX_TURNS` per question and
+`CHAT_MAX_BUDGET_USD` for the whole conversation (anthropic provider only;
+local is free). Prerequisites: populated bucket + GCP credentials; `dbt parse`
+enriches the glossary (optional).
 
-**Notícias da web (opcional):** com `TAVILY_API_KEY` no `.env` (free tier em
-<https://tavily.com>), o chat ganha a tool `search_news` — notícias recentes
-sobre seguradoras (parcerias, M&A, regulação) como **contexto** dos números,
-sempre citadas com fonte + data + link, nunca como fonte de cifras. Cap de
-`NEWS_MAX_SEARCHES` buscas por conversa (default 5). Sem a key, a tool não é
-registrada e nada muda. (Habilitar no report semanal vem num próximo PR.)
+**Web news (optional):** with a `TAVILY_API_KEY` in `.env` (free tier at
+<https://tavily.com>), the chat gains the `search_news` tool — recent news
+about insurers (partnerships, M&A, regulation) as **context** for the numbers,
+always cited with source + date + link, never as a source of figures. Capped
+at `NEWS_MAX_SEARCHES` searches per conversation (default 5). Without the key
+the tool isn't registered and nothing changes. (Enabling it in the weekly
+report is a future PR.)
 
-### Rodar com modelo local (LM Studio)
+### Running with a local model (LM Studio)
 
-O LM Studio (>= 0.4.1) expõe um endpoint **Anthropic-compatible** (`/v1/messages`),
-então o mesmo Agent SDK funciona apontado pra ele — sem API key da Anthropic:
+LM Studio (>= 0.4.1) exposes an **Anthropic-compatible** endpoint
+(`/v1/messages`), so the same Agent SDK works pointed at it — no Anthropic API
+key required:
 
-1. No LM Studio: carregar o modelo com **contexto >= 25k tokens** (o SDK é
-   pesado em contexto) e ligar o servidor local (aba Developer, porta 1234).
-2. No `.env`:
+1. In LM Studio: load the model with a **context window >= 25k tokens** (the
+   SDK is context-heavy) and start the local server (Developer tab, port 1234).
+2. In `.env`:
 
    ```
    AGENT_PROVIDER=local
-   AGENT_MODEL=google/gemma-3-27b      # id do modelo no LM Studio
+   AGENT_MODEL=google/gemma-3-27b      # the model id in LM Studio
    LMSTUDIO_BASE_URL=http://localhost:1234
    ```
 
-3. `uv run python -m src.agent.main` — publica no GCS e envia e-mail normalmente
-   (o cap de budget USD não se aplica; `AGENT_MAX_TURNS` continua valendo).
+3. `uv run python -m src.agent.main` — publishes to GCS and sends the e-mail
+   as usual (the USD budget cap doesn't apply; `AGENT_MAX_TURNS` still does).
 
-> **Caveat:** o agente depende de *tool calling* confiável (muitas chamadas de
-> `run_sql`). O Gemma é fraco nisso; se ele não emitir tool calls direito,
-> modelos como **Qwen3** (14B / 30B-A3B) têm function calling nativo bem melhor
-> no LM Studio. O caminho Anthropic segue sendo o default do workflow semanal —
-> o modo local é manual/experimental.
+> **Caveat:** the agent depends on reliable *tool calling* (many `run_sql`
+> calls). Gemma is weak at it; if it doesn't emit tool calls properly, models
+> like **Qwen3** (14B / 30B-A3B) have much better native function calling in
+> LM Studio. The Anthropic path remains the weekly workflow's default — local
+> mode is manual/experimental.
 
-### Em produção (GitHub Actions)
+### In production (GitHub Actions)
 
-- **`insights.yml`** — `schedule` **semanal** (segundas 14:00 UTC, ~2h depois
-  do ingest) + `workflow_dispatch`. Roda com `AGENT_MODEL=opus` e budget de
-  US$ 1,25/run (o default local segue sonnet/0,75). Autentica no GCP
-  via Workload Identity Federation (SA `bq-agent-readonly`: leitura no BQ +
-  `objectAdmin` no bucket de reports), roda o agente, **publica no GCS** e envia
-  o e-mail. Nada é commitado no repo; as cópias scratch viram artifact do
-  workflow (7 dias) como rede de segurança. Cada disparo gera um report
-  **novo**: o 1º do dia é `YYYY-MM-DD`, reruns ganham sufixo `_2`, `_3`…
-  (reservado no manifest do bucket). Runs sobrepostos são permitidos (sem
+- **`insights.yml`** — **weekly** `schedule` (Mondays 14:00 UTC, ~2 h after
+  the ingest) + `workflow_dispatch`. Runs with `AGENT_MODEL=opus` and a
+  US$ 1.25/run budget (the local default stays sonnet/0.75). Authenticates to
+  GCP via Workload Identity Federation (SA `bq-agent-readonly`: BigQuery read
+  + `objectAdmin` on the reports bucket), runs the agent, **publishes to GCS**
+  and sends the e-mail. Nothing is committed to the repo; the scratch copies
+  become a workflow artifact (7 days) as a safety net. Every trigger produces
+  a **new** report: the day's first is `YYYY-MM-DD`, reruns get suffixes `_2`,
+  `_3`… (reserved in the bucket manifest). Overlapping runs are allowed (no
   `cancel-in-progress`).
-- **`ingest.yml`** — `schedule` **semanal** (segundas) + `workflow_dispatch`.
-  Autentica no GCP por **chave JSON** (`GCP_SA_KEY`, a SA de escrita
-  `susep-ingest`), roda `python -m src.main`
-  (scrape → pré-check barato → ingere só se mudou → `dbt build`). Em período
-  novo: e-mail de aviso (pelo próprio pipeline) + dispara o `insights.yml`.
-  Um ingest por vez (`concurrency`), pois escreve no GCS/BQ e reconstrói os
-  marts.
-- **`ci.yml`** — em push/PR: ruff + mypy + pytest + scan de segredos (gitleaks).
-- **Secrets/vars necessários:** secrets `ANTHROPIC_API_KEY` (ou
-  `CLAUDE_CODE_OAUTH_TOKEN` — cobra na assinatura, ver abaixo),
+- **`ingest.yml`** — **weekly** `schedule` (Mondays) + `workflow_dispatch`.
+  Authenticates to GCP with a **JSON key** (`GCP_SA_KEY`, the write SA
+  `susep-ingest`), runs `python -m src.main`
+  (scrape → cheap pre-check → ingest only on change → `dbt build`). On a new
+  period: a notice e-mail (sent by the pipeline itself) + triggers
+  `insights.yml`. One ingest at a time (`concurrency`), since it writes to
+  GCS/BQ and rebuilds the marts.
+- **`ci.yml`** — on push/PR: ruff + mypy + pytest + secret scan (gitleaks).
+- **Required secrets/vars:** secrets `ANTHROPIC_API_KEY` (or
+  `CLAUDE_CODE_OAUTH_TOKEN` — bills the subscription, see below),
   `GCP_WIF_PROVIDER`, `GCP_AGENT_SA` (insights, read-only), `GCP_SA_KEY`
-  (ingestão, escrita), `BREVO_API_KEY`, `REPORT_EMAIL_FROM`,
-  `REPORT_EMAIL_TO`; variável `GCP_PROJECT_ID`.
-- **Cobrança por assinatura (opcional):** `claude setup-token` (plano Pro/Max)
-  gera um token OAuth de ~1 ano; salvo como secret `CLAUDE_CODE_OAUTH_TOKEN`,
-  ele **vence** a API key e os runs do agente passam a consumir a cota da
-  assinatura (compartilhada com o uso interativo do Claude Code) em vez de
-  créditos de API. Para voltar pra API, basta deletar o secret. O
-  `AGENT_MAX_BUDGET_USD` segue valendo como guardrail (custo vira estimativa).
+  (ingestion, write), `BREVO_API_KEY`, `REPORT_EMAIL_FROM`,
+  `REPORT_EMAIL_TO`; variable `GCP_PROJECT_ID`.
+- **Subscription billing (optional):** `claude setup-token` (Pro/Max plan)
+  generates a ~1-year OAuth token; saved as the `CLAUDE_CODE_OAUTH_TOKEN`
+  secret it **wins** over the API key and agent runs consume the
+  subscription's quota (shared with interactive Claude Code usage) instead of
+  API credits. To go back to the API, just delete the secret.
+  `AGENT_MAX_BUDGET_USD` still applies as a guardrail (cost becomes an
+  estimate).
 
 ### Git workflow
 
-- Trabalho em feature branches (`feat/`, `fix/`, `chore/`) que entram em `main`
-  via PR; cada PR roda o CI (ruff + mypy + pytest + scan de segredos).
+- Work happens on feature branches (`feat/`, `fix/`, `chore/`) merged into
+  `main` via PR; every PR runs CI (ruff + mypy + pytest + secret scan).
 - [Conventional Commits](https://www.conventionalcommits.org/).
 
-## Estrutura
+## Repository layout
 
 ```
 susep-ses-pipeline/
 ├── .github/workflows/            # ci.yml (lint/test/secret-scan) · ingest.yml · insights.yml
 ├── infra/                        # Terraform (datasets, buckets, SAs, IAM, WIF)
 ├── scripts/
-│   ├── bootstrap/                # provisionamento residual (APIs + ingestion_log)
+│   ├── bootstrap/                # residual provisioning (APIs + ingestion_log)
 │   └── backfill_reports_to_gcs.py
 ├── src/
-│   ├── main.py                   # entrypoint da pipeline de ingestão
-│   ├── config.py                 # carrega env vars
+│   ├── main.py                   # ingestion pipeline entrypoint
+│   ├── config.py                 # loads env vars
 │   ├── ingestion/                # scraper, hasher, downloader
 │   ├── bronze/                   # unzip → parquet
 │   ├── storage/                  # GCS object I/O (upload/download/parse gs://)
 │   ├── loaders/                  # GCS → BigQuery (load_table_from_uri)
 │   ├── state/                    # ingestion_log
-│   ├── agent/                    # agente de insights (tools, glossário, histórico, prompt)
-│   └── chat/                     # chat analítico multi-turn (CLI + Streamlit)
+│   ├── agent/                    # insights agent (tools, glossary, history, prompt)
+│   └── chat/                     # multi-turn analyst chat (CLI + Streamlit)
 ├── dbt/
 │   ├── models/                   # staging (view) + marts (fct_seguros + dims)
-│   ├── seeds/                    # cnseg_ramos.csv (de-para de ramos CNSeg)
+│   ├── seeds/                    # cnseg_ramos.csv (CNSeg lines crosswalk)
 │   └── macros/                   # br_to_numeric, generate_schema_name
-├── reports/                      # scratch local do run (fonte de verdade = bucket GCS)
-├── tests/                        # espelha src/ (pytest + fakes; sem rede/creds)
+├── reports/                      # local run scratch (source of truth = GCS bucket)
+├── tests/                        # mirrors src/ (pytest + fakes; no network/creds)
 └── pyproject.toml
 ```
 
@@ -423,13 +438,13 @@ integration contract.
   for a solo-maintained platform; the documented hardening path is per-task
   service accounts via SA impersonation inside the containers.
 
-## Fora de escopo (por ora)
+## Out of scope (for now)
 
-- Demais CSVs de fato do zip (resseguros, capitalização, previdência…); as
-  tabelas de domínio/lookup já são ingeridas.
-- Camadas silver/gold no dbt e separação dev vs prod.
-- Migração do ingest para WIF (hoje usa chave JSON de SA) e alertas de Slack.
+- The other fact CSVs in the zip (reinsurance, capitalization, private
+  pension…); the domain/lookup tables are already ingested.
+- dbt silver/gold layers and dev vs prod separation.
+- Migrating the ingest to WIF (it uses a SA JSON key today) and Slack alerts.
 
-## Licença
+## License
 
 [MIT](LICENSE).
