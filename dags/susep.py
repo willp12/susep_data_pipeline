@@ -51,9 +51,36 @@ import pendulum
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.standard.operators.python import ShortCircuitOperator
 from airflow.sdk import DAG, Param
+from docker.types import Mount
 
 PROJECT_ID = os.environ["GCP_PROJECT_ID"]  # injected into the scheduler by the stack
-IMAGE = f"us-central1-docker.pkg.dev/{PROJECT_ID}/pipelines/susep_data_pipeline:latest"
+
+# Local mode: AIRFLOW_LOCAL=1 (set only by the local Docker Desktop stack) flips
+# the image to the locally built tag and bind-mounts the host's gcloud ADC into
+# the task containers (on the VM, ADC comes from the metadata server instead).
+# The variable is absent on the VM and in CI, so cloud behaviour is unchanged.
+LOCAL = os.environ.get("AIRFLOW_LOCAL") == "1"
+IMAGE = (
+    "pipelines/susep_data_pipeline:local"
+    if LOCAL
+    else f"us-central1-docker.pkg.dev/{PROJECT_ID}/pipelines/susep_data_pipeline:latest"
+)
+
+# LOCAL_ADC_HOST_PATH is read only inside the local branch — parsing on the VM
+# and in CI never touches it.
+LOCAL_MOUNTS = (
+    [
+        Mount(
+            source=os.environ["LOCAL_ADC_HOST_PATH"],
+            target="/adc/adc.json",
+            type="bind",
+            read_only=True,
+        )
+    ]
+    if LOCAL
+    else []
+)
+ADC_ENV = {"GOOGLE_APPLICATION_CREDENTIALS": "/adc/adc.json"} if LOCAL else {}
 
 # Same env as the ingest.yml job (incl. the optional Brevo notice e-mail,
 # which src.main skips when unset). ADC comes from the metadata server.
@@ -63,6 +90,7 @@ PIPELINE_ENV = {
     "BREVO_API_KEY": "{{ var.value.brevo_api_key }}",
     "REPORT_EMAIL_TO": "{{ var.value.get('report_email_to', '') }}",
     "REPORT_EMAIL_FROM": "{{ var.value.get('report_email_from', '') }}",
+    **ADC_ENV,
 }
 
 # Same env as the insights.yml job: the subscription OAuth token wins over the
@@ -84,13 +112,15 @@ INSIGHTS_ENV = {
     "BREVO_API_KEY": "{{ var.value.brevo_api_key }}",
     "REPORT_EMAIL_TO": "{{ var.value.get('report_email_to', '') }}",
     "REPORT_EMAIL_FROM": "{{ var.value.get('report_email_from', '') }}",
+    **ADC_ENV,
 }
 
 COMMON = dict(
     image=IMAGE,
-    force_pull=True,  # deploy = pushing a new :latest
+    force_pull=not LOCAL,  # cloud deploy = pushing a new :latest; local images are built in place
     auto_remove="force",  # never leak stopped containers on a 30 GB disk
     mount_tmp_dir=False,  # no host tmp coupling
+    mounts=LOCAL_MOUNTS,  # ADC bind in local mode; empty in the cloud
 )
 
 
