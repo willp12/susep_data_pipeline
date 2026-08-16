@@ -109,17 +109,3 @@ resource "google_storage_bucket_iam_member" "data_ingest" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${local.ingest_sa_email}"
 }
-
-# Airflow VM SA (repo willp12/airflow): the containerized pipeline writes raw
-# zips + bronze parquet here and publishes reports (see iam.tf note).
-resource "google_storage_bucket_iam_member" "data_airflow" {
-  bucket = google_storage_bucket.data.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${local.airflow_sa_email}"
-}
-
-resource "google_storage_bucket_iam_member" "reports_airflow" {
-  bucket = google_storage_bucket.reports.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${local.airflow_sa_email}"
-}
