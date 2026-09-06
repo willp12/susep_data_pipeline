@@ -9,6 +9,9 @@ version: 2
 
 sources:
   - name: susep_ses_bronze
+    # Dataset resolves like src/config.py: the env var (passed through by
+    # src/main.py's dbt subprocess) wins, falling back to the default name.
+    schema: "{{ env_var('GCP_BQ_DATASET_BRONZE', 'susep_ses_bronze') }}"
     description: >
       Raw bronze tables loaded from the SUSEP SES zip. Every business column is
       STRING (Brazilian decimal format preserved verbatim). One full snapshot is

@@ -43,4 +43,4 @@ select
     _ingestion_date,
     _source_file_name
 
-from `{{ env_var('GCP_PROJECT_ID') }}.{{ env_var('GCP_BQ_DATASET_BRONZE', 'susep_ses_bronze') }}.ses_seguros`
+from {{ source('susep_ses_bronze', 'ses_seguros') }}

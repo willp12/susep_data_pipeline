@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test run chat chat-ui dbt-build bootstrap clean
+.PHONY: install lint fmt test run chat chat-ui dbt-build dbt-unit bootstrap clean
 
 install:
 	uv sync --all-groups
@@ -27,6 +27,10 @@ chat-ui:
 
 dbt-build:
 	cd dbt && uv run dbt build --profiles-dir .
+
+# dbt unit tests only (dbt build already runs them before each model).
+dbt-unit:
+	cd dbt && uv run dbt test --select "test_type:unit" --profiles-dir .
 
 # Residual bootstrap (APIs + ingestion_log table). The infra proper is
 # Terraform: cd infra && terraform apply.

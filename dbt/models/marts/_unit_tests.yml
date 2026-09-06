@@ -1,0 +1,268 @@
+version: 2
+
+# Native dbt unit tests for the marts. Mechanics notes:
+# - EVERY direct parent of the tested model must appear under `given`
+#   (fct_seguros has 6); parents irrelevant to a case get `rows: []`, which
+#   renders an empty, correctly-typed CTE.
+# - `expect` compares ONLY the columns listed (rows as a set, count strict),
+#   so each test asserts just the behavior it locks in.
+# - Fixture types come from introspecting the real relations: periodo_ref and
+#   _ingestion_date are DATE ('YYYY-MM-DD' strings), measures are NUMERIC,
+#   codes are STRING.
+
+unit_tests:
+  # ---------------------------------------------------------------- fct_seguros
+  - name: fct_keeps_only_latest_ingestion_snapshot
+    description: >
+      The dedup is a GLOBAL max(_ingestion_date) + filter, not a per-key
+      window: only rows from the newest snapshot survive. Subtlety locked in:
+      a period present only in an older snapshot (2024-12 here) disappears
+      entirely — by design, each snapshot is the full restatement.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_ganho: 100, _ingestion_date: "2025-08-25"}
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_ganho: 999, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2024-12-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_ganho: 50, _ingestion_date: "2025-08-25"}
+      - input: ref('dim_ramo')
+        rows: []
+      - input: ref('dim_grupo_ramo')
+        rows: []
+      - input: ref('dim_cnseg')
+        rows: []
+      - input: ref('dim_entidade')
+        rows: []
+      - input: ref('dim_grupo_economico')
+        rows: []
+    expect:
+      rows:
+        - {periodo_ref: "2025-01-01", premio_ganho: 999, _ingestion_date: "2025-09-01"}
+
+  - name: fct_aggregates_measures_to_grain
+    description: >
+      Rows collapse to the (periodo, entity, group, branch) grain with plain
+      sum(): NULLs are ignored within a group (30 + NULL = 30), a measure never
+      fed stays NULL (premio_direto), and loss_ratio is computed on the SUMMED
+      values (30/300 = 0.1), with safe_divide(NULL, x) -> NULL for E2.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_ganho: 100, sinistro_ocorrido: 30, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_ganho: 200, sinistro_ocorrido: null, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E2", economic_group_code: "G1", branch_code: "0111", premio_ganho: 40, sinistro_ocorrido: null, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows: []
+      - input: ref('dim_grupo_ramo')
+        rows: []
+      - input: ref('dim_cnseg')
+        rows: []
+      - input: ref('dim_entidade')
+        rows: []
+      - input: ref('dim_grupo_economico')
+        rows: []
+    expect:
+      rows:
+        - {entity_code: "E1", premio_ganho: 300, sinistro_ocorrido: 30, premio_direto: null, loss_ratio: 0.1}
+        - {entity_code: "E2", premio_ganho: 40, sinistro_ocorrido: null, premio_direto: null, loss_ratio: null}
+
+  - name: fct_premio_emitido_coalesce_matrix
+    description: >
+      premio_emitido = coalesce(premio_de_seguros, 0) + coalesce(premio_emitido_cap, 0)
+      — the derived metric is NEVER NULL (worst case 0), while the raw summed
+      column stays NULL alongside for contrast.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E3", economic_group_code: "G1", branch_code: "0111", premio_de_seguros: 100, premio_emitido_cap: 40, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", premio_de_seguros: 100, premio_emitido_cap: null, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E2", economic_group_code: "G1", branch_code: "0111", premio_de_seguros: null, premio_emitido_cap: 40, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E4", economic_group_code: "G1", branch_code: "0111", premio_de_seguros: null, premio_emitido_cap: null, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows: []
+      - input: ref('dim_grupo_ramo')
+        rows: []
+      - input: ref('dim_cnseg')
+        rows: []
+      - input: ref('dim_entidade')
+        rows: []
+      - input: ref('dim_grupo_economico')
+        rows: []
+    expect:
+      rows:
+        - {entity_code: "E3", premio_de_seguros: 100, premio_emitido: 140}
+        - {entity_code: "E1", premio_de_seguros: 100, premio_emitido: 100}
+        - {entity_code: "E2", premio_de_seguros: null, premio_emitido: 40}
+        - {entity_code: "E4", premio_de_seguros: null, premio_emitido: 0}
+
+  - name: fct_loss_ratio_null_on_zero_or_null_premium
+    description: >
+      loss_ratio = safe_divide(sum(sinistro_ocorrido), sum(premio_ganho)):
+      NULL on division by zero and on NULL premium — never an error, never an
+      infinity. Documented contract ("NULL when earned premium is 0").
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E3", economic_group_code: "G1", branch_code: "0111", sinistro_ocorrido: 50, premio_ganho: 200, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0111", sinistro_ocorrido: 50, premio_ganho: 0, _ingestion_date: "2025-09-01"}
+          - {periodo_ref: "2025-01-01", entity_code: "E2", economic_group_code: "G1", branch_code: "0111", sinistro_ocorrido: 50, premio_ganho: null, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows: []
+      - input: ref('dim_grupo_ramo')
+        rows: []
+      - input: ref('dim_cnseg')
+        rows: []
+      - input: ref('dim_entidade')
+        rows: []
+      - input: ref('dim_grupo_economico')
+        rows: []
+    expect:
+      rows:
+        - {entity_code: "E3", loss_ratio: 0.25}
+        - {entity_code: "E1", loss_ratio: null}
+        - {entity_code: "E2", loss_ratio: null}
+
+  - name: fct_enriches_names_from_all_dims
+    description: >
+      Happy path across the five left joins + the derived ramo_group_code
+      (substr(branch_code, 1, 2), also the join key to dim_grupo_ramo). The
+      single expected row doubles as a no-fan-out assertion.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "0114", premio_ganho: 100, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows:
+          - {branch_code: "0114", branch_name: "Penhor Rural"}
+      - input: ref('dim_grupo_ramo')
+        rows:
+          - {ramo_group_code: "01", ramo_group_name: "Patrimonial"}
+      - input: ref('dim_cnseg')
+        rows:
+          - {branch_code: "0114", cnseg_segmento: "Danos e Responsabilidades", cnseg_grupo_1: "Rural", cnseg_grupo_2: "Penhor Rural"}
+      - input: ref('dim_entidade')
+        rows:
+          - {entity_code: "E1", entity_name: "Seguradora Exemplo"}
+      - input: ref('dim_grupo_economico')
+        rows:
+          - {economic_group_code: "G1", economic_group_name: "Grupo Exemplo"}
+    expect:
+      rows:
+        - {branch_code: "0114", ramo_group_code: "01", branch_name: "Penhor Rural", ramo_group_name: "Patrimonial", cnseg_segmento: "Danos e Responsabilidades", cnseg_grupo_1: "Rural", cnseg_grupo_2: "Penhor Rural", entity_name: "Seguradora Exemplo", economic_group_name: "Grupo Exemplo"}
+
+  - name: fct_unmatched_dim_codes_yield_null_names
+    description: >
+      There are deliberately no coalesce fallbacks on the five left joins:
+      codes unknown to the dims come out with NULL names. Each dim is given a
+      real (non-matching) row, which is stronger than an empty fixture — the
+      joins execute and still miss.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E9", economic_group_code: "G9", branch_code: "9999", premio_ganho: 100, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows:
+          - {branch_code: "0114", branch_name: "Penhor Rural"}
+      - input: ref('dim_grupo_ramo')
+        rows:
+          - {ramo_group_code: "01", ramo_group_name: "Patrimonial"}
+      - input: ref('dim_cnseg')
+        rows:
+          - {branch_code: "0114", cnseg_segmento: "Danos e Responsabilidades", cnseg_grupo_1: "Rural", cnseg_grupo_2: "Penhor Rural"}
+      - input: ref('dim_entidade')
+        rows:
+          - {entity_code: "E1", entity_name: "Seguradora Exemplo"}
+      - input: ref('dim_grupo_economico')
+        rows:
+          - {economic_group_code: "G1", economic_group_name: "Grupo Exemplo"}
+    expect:
+      rows:
+        - {branch_code: "9999", ramo_group_code: "99", branch_name: null, ramo_group_name: null, cnseg_segmento: null, entity_name: null, economic_group_name: null}
+
+  - name: fct_branch_code_not_lpadded_for_cnseg_join
+    description: >
+      Pins a KNOWN asymmetry as current behavior: dim_cnseg normalizes its key
+      to 4 digits (lpad(trim(...), 4, '0')) but fct joins branch_code AS-IS, so
+      a legacy 3-digit code matches dim_ramo/dim_grupo_ramo and silently
+      misses the CNSeg taxonomy. If the join is ever fixed (lpad on the fct
+      side), THIS test must flip in the same PR — making the change deliberate.
+    model: fct_seguros
+    given:
+      - input: ref('stg_ses_seguros')
+        rows:
+          - {periodo_ref: "2025-01-01", entity_code: "E1", economic_group_code: "G1", branch_code: "980", premio_ganho: 100, _ingestion_date: "2025-09-01"}
+      - input: ref('dim_ramo')
+        rows:
+          - {branch_code: "980", branch_name: "Ramo Legado 980"}
+      - input: ref('dim_grupo_ramo')
+        rows:
+          - {ramo_group_code: "98", ramo_group_name: "Grupo 98"}
+      - input: ref('dim_cnseg')
+        rows:
+          - {branch_code: "0980", cnseg_segmento: "Danos e Responsabilidades"}
+      - input: ref('dim_entidade')
+        rows: []
+      - input: ref('dim_grupo_economico')
+        rows: []
+    expect:
+      rows:
+        - {branch_code: "980", ramo_group_code: "98", branch_name: "Ramo Legado 980", ramo_group_name: "Grupo 98", cnseg_segmento: null}
+
+  # ----------------------------------------------------------------- dimensions
+  - name: dim_cnseg_lpads_trims_and_filters_codes
+    description: >
+      Seed codes are normalized on the way in: lpad to 4 digits ('980' ->
+      '0980'), trim on code and taxonomy values, and NULL/whitespace-only codes
+      are filtered out.
+    model: dim_cnseg
+    given:
+      - input: ref('cnseg_ramos')
+        rows:
+          - {ramo_code: "980", segmento: " Danos e Responsabilidades ", grupo_1: "Rural", grupo_2: "Penhor Rural"}
+          - {ramo_code: " 0114 ", segmento: "Pessoas", grupo_1: "Vida", grupo_2: "Vida Risco"}
+          - {ramo_code: "  ", segmento: "Filtrado", grupo_1: "x", grupo_2: "x"}
+          - {ramo_code: null, segmento: "Filtrado", grupo_1: "x", grupo_2: "x"}
+    expect:
+      rows:
+        - {branch_code: "0980", cnseg_segmento: "Danos e Responsabilidades"}
+        - {branch_code: "0114", cnseg_segmento: "Pessoas"}
+
+  - name: dim_grupo_economico_keeps_latest_name_per_code
+    description: >
+      Window dedup: row_number() partitioned by trim(cogrupo) ordered by
+      damesano desc keeps the LATEST name per group ('202506' beats '202401' —
+      lexicographic order on YYYYMM strings is chronological). trim unifies
+      ' G1 ' with 'G1' into one partition; empty codes are filtered.
+    model: dim_grupo_economico
+    given:
+      - input: source('susep_ses_bronze', 'ses_grupos_economicos')
+        rows:
+          - {cogrupo: "G1", nogrupo: "Nome Antigo", damesano: "202401"}
+          - {cogrupo: " G1 ", nogrupo: "Nome Novo", damesano: "202506"}
+          - {cogrupo: "", nogrupo: "Filtrado", damesano: "202506"}
+          - {cogrupo: "G2", nogrupo: "Outro Grupo", damesano: "202001"}
+    expect:
+      rows:
+        - {economic_group_code: "G1", economic_group_name: "Nome Novo"}
+        - {economic_group_code: "G2", economic_group_name: "Outro Grupo"}
+
+  - name: dim_ramo_distinct_trimmed_codes
+    description: >
+      Representative test of the distinct+trim idiom shared by dim_ramo,
+      dim_grupo_ramo and dim_entidade: whitespace variants collapse into one
+      row after trim, empty codes are filtered.
+    model: dim_ramo
+    given:
+      - input: source('susep_ses_bronze', 'ses_ramos')
+        rows:
+          - {coramo: " 0114 ", noramo: " Penhor Rural "}
+          - {coramo: "0114", noramo: "Penhor Rural"}
+          - {coramo: "", noramo: "Filtrado"}
+    expect:
+      rows:
+        - {branch_code: "0114", branch_name: "Penhor Rural"}

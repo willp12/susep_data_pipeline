@@ -1,0 +1,55 @@
+version: 2
+
+# Native dbt unit tests (dbt >= 1.8): the model SQL runs against fixture rows
+# (rendered as literal CTEs in place of source()/ref()), and the result is
+# diffed against `expect` — only the columns listed in expect are compared.
+# They execute inside `dbt build` BEFORE the model materializes (a failure
+# skips the build) and standalone via `make dbt-unit`. Fixtures are typed by
+# introspecting the real parent relations, so parents must exist in BigQuery.
+
+unit_tests:
+  - name: stg_br_to_numeric_conversion_matrix
+    description: >
+      br_to_numeric turns Brazilian decimal strings into NUMERIC: comma becomes
+      the decimal dot; empty/NULL/unparseable degrade to NULL (safe_cast, by
+      design). One column (premio_ganho) stands in for all 17 — the macro
+      expands to the same expression on each. The '1.234,56' case documents the
+      intentional no-thousand-separator limitation: if SUSEP ever exports
+      thousand separators, this test is the tripwire that forces extending the
+      macro.
+    model: stg_ses_seguros
+    given:
+      - input: source('susep_ses_bronze', 'ses_seguros')
+        rows:
+          - {damesano: "202501", coenti: "E1", premio_ganho: "108252392,92"}
+          - {damesano: "202501", coenti: "E2", premio_ganho: "-1234,5"}
+          - {damesano: "202501", coenti: "E3", premio_ganho: "150"}
+          - {damesano: "202501", coenti: "E4", premio_ganho: ""}
+          - {damesano: "202501", coenti: "E5"} # premio_ganho absent -> NULL in
+          - {damesano: "202501", coenti: "E6", premio_ganho: "1.234,56"}
+    expect:
+      rows:
+        - {entity_code: "E1", premio_ganho: 108252392.92}
+        - {entity_code: "E2", premio_ganho: -1234.5}
+        - {entity_code: "E3", premio_ganho: 150}
+        - {entity_code: "E4", premio_ganho: null} # safe_cast('') -> NULL
+        - {entity_code: "E5", premio_ganho: null} # NULL passthrough
+        - {entity_code: "E6", premio_ganho: null} # '1.234.56' after replace
+
+  - name: stg_periodo_ref_parses_damesano_first_of_month
+    description: >
+      periodo_ref = parse_date('%Y%m%d', damesano || '01'): the YYYYMM text
+      becomes the first day of the month; NULL damesano stays NULL (NULL || '01'
+      is NULL). Malformed NON-null damesano intentionally fails the build —
+      parse_date without SAFE. is the fail-fast choice documented in the model
+      header, and a runtime error is not an assertable unit-test outcome.
+    model: stg_ses_seguros
+    given:
+      - input: source('susep_ses_bronze', 'ses_seguros')
+        rows:
+          - {damesano: "202501", coenti: "D1"}
+          - {damesano: null, coenti: "D2"}
+    expect:
+      rows:
+        - {entity_code: "D1", periodo_ref: "2025-01-01"}
+        - {entity_code: "D2", periodo_ref: null}
