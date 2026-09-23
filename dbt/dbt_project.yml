@@ -18,6 +18,12 @@ clean-targets:
 
 models:
   susep_ses:
+    # Write the _models.yml descriptions into BigQuery (table + columns) on
+    # every build, so describe_table and the BigQuery console show the same
+    # glossary the insights agent gets from the manifest.
+    +persist_docs:
+      relation: true
+      columns: true
     staging:
       +materialized: view
     marts:

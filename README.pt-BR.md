@@ -214,7 +214,9 @@ nada é commitado no repo.
   chamadas `run_sql` (incluindo rejeitadas/falhas) — nunca a partir do texto do
   modelo.
 - **Glossário:** as descrições de coluna vêm do `dbt docs` (manifest gerado por
-  `dbt parse`), a partir dos `_models.yml`. Refine-os pra melhorar os insights.
+  `dbt parse`), a partir dos `_models.yml`. O `persist_docs` também grava essas
+  descrições no BigQuery a cada `dbt build`, então o `describe_table` devolve o
+  mesmo texto. Refine-os pra melhorar os insights.
 - **Janela:** foca nos últimos 3 anos de `periodo_ref`.
 - **Guardrails:** gate default-deny (só as tools acima), `max_turns` e
   `max_budget_usd` (config), além do cap de bytes por query.
