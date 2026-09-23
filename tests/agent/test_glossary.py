@@ -47,3 +47,41 @@ def test_build_glossary_flattens_sources_and_models(tmp_path: Path) -> None:
     assert "`_extras`" in result
     # Non-model nodes (tests) are skipped.
     assert "some_test" not in result
+
+
+def test_build_glossary_keeps_only_the_requested_schemas(tmp_path: Path) -> None:
+    manifest = {
+        "sources": {
+            "source.p.susep_ses_bronze.ses_seguros": {
+                "schema": "susep_ses_bronze",
+                "name": "ses_seguros",
+                "description": "raw bronze",
+                "columns": {"coenti": {"description": "insurer code"}},
+            }
+        },
+        "nodes": {
+            "model.p.stg_ses_seguros": {
+                "resource_type": "model",
+                "schema": "susep_ses_staging",
+                "name": "stg_ses_seguros",
+                "description": "typed view",
+                "columns": {},
+            },
+            "model.p.fct_seguros": {
+                "resource_type": "model",
+                "schema": "susep_ses_marts",
+                "name": "fct_seguros",
+                "description": "curated fact",
+                "columns": {"premio_direto": {"description": "direct premium"}},
+            },
+        },
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = build_glossary(manifest_path=path, schemas={"susep_ses_marts"})
+
+    assert "susep_ses_marts.fct_seguros" in result
+    assert "direct premium" in result
+    assert "susep_ses_bronze" not in result
+    assert "susep_ses_staging" not in result
