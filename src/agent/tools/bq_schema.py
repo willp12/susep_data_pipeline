@@ -1,8 +1,10 @@
 """describe_table — return a table's schema + metadata, no query, no cost.
 
 Uses ``Client.get_table`` (a metadata GET), so the agent can learn the shape
-of a table and read column descriptions (sourced from dbt docs)
-without spending any BigQuery bytes.
+of a table and read column descriptions without spending any BigQuery bytes.
+The descriptions are the ``_models.yml`` text, written into BigQuery by dbt's
+``persist_docs`` on each build. dbt only writes them for its models: the bronze
+sources are loaded by the pipeline, not built by dbt.
 """
 
 from __future__ import annotations

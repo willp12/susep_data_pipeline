@@ -14,6 +14,7 @@ still runs, just with thinner semantics.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,16 @@ def _format_node(relation: str, kind: str, node: dict[str, Any]) -> list[str]:
     return block
 
 
-def build_glossary(manifest_path: Path | None = None) -> str:
-    """Return a markdown glossary built from the dbt manifest, or a fallback note."""
+def build_glossary(
+    manifest_path: Path | None = None,
+    *,
+    schemas: Collection[str] | None = None,
+) -> str:
+    """Return a markdown glossary built from the dbt manifest, or a fallback note.
+
+    ``schemas`` keeps only the sources and models that live in those datasets
+    (e.g. just the marts, for an agent that may not see bronze); None keeps all.
+    """
     path = manifest_path or _MANIFEST
     if not path.exists():
         return _FALLBACK
@@ -58,11 +67,15 @@ def build_glossary(manifest_path: Path | None = None) -> str:
     lines: list[str] = []
 
     for node in data.get("sources", {}).values():
+        if schemas is not None and node["schema"] not in schemas:
+            continue
         relation = f"{node['schema']}.{node['name']}"
         lines.extend(_format_node(relation, "bronze source", node))
 
     for node in data.get("nodes", {}).values():
         if node.get("resource_type") != "model":
+            continue
+        if schemas is not None and node["schema"] not in schemas:
             continue
         relation = f"{node['schema']}.{node['name']}"
         lines.extend(_format_node(relation, "dbt model", node))

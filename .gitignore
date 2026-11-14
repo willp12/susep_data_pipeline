@@ -225,6 +225,10 @@ toolbox.exe
 # reports/ are scratch copies of the current run (see src/agent/publisher.py).
 reports/
 
+# Eval runs (transcripts, runs.jsonl). The curated summary lives in
+# evals/precisao/RESULTS.md.
+evals/precisao/results/
+
 # Terraform (infra/). Keep .terraform.lock.hcl tracked (it pins providers);
 # never commit state or real tfvars.
 .terraform/
