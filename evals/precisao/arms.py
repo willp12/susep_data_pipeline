@@ -1,9 +1,12 @@
-"""Os três braços do experimento e o ClaudeAgentOptions de cada um.
+"""Os braços do experimento e o ClaudeAgentOptions de cada um.
+
+A, B e C leem o BigQuery (bronze, bronze com skill, mart). D lê os CSVs crus
+do zip da SUSEP, com SQL no DuckDB (ver csvtools.py).
 
 O isolamento é o ponto: nada entra no agente além do que o braço prevê.
 
 * Disco: a produção passa ``setting_sources=None``, que no SDK 0.2.82 carrega
-  as configurações de usuário, projeto e local. Aqui, A e C usam ``[]`` e B
+  as configurações de usuário, projeto e local. Aqui, A, C e D usam ``[]`` e B
   carrega só "project", num diretório temporário que contém apenas a skill.
   ``CLAUDE_CONFIG_DIR`` aponta para um diretório vazio, como a home do runner
   do CI.
@@ -31,7 +34,8 @@ from claude_agent_sdk import (
     ToolPermissionContext,
 )
 
-from evals.precisao.prompts import system_prompt
+from evals.precisao.csvtools import CSV_ALLOWED_TOOLS, CSV_FILES, CSV_SERVER_NAME
+from evals.precisao.prompts import csv_system_prompt, system_prompt
 from evals.precisao.questions import ANSWER_SCHEMA
 from evals.precisao.tools import ALLOWED_TOOLS, SERVER_NAME
 from src.agent.providers import provider_env
@@ -63,28 +67,50 @@ MART_TABLES = (
 )
 
 
+Layer = Literal["bronze", "marts", "csv"]
+
+
 @dataclass(frozen=True)
 class Arm:
     key: str
     label: str
-    layer: Literal["bronze", "marts"]
+    layer: Layer
     skill: bool
     glossary: bool
 
     @property
     def tables(self) -> tuple[str, ...]:
-        return BRONZE_TABLES if self.layer == "bronze" else MART_TABLES
+        """What the arm may read: BigQuery tables, or CSV files for arm D."""
+        return {"bronze": BRONZE_TABLES, "marts": MART_TABLES, "csv": CSV_FILES}[self.layer]
+
+    @property
+    def server_name(self) -> str:
+        return CSV_SERVER_NAME if self.layer == "csv" else SERVER_NAME
+
+    @property
+    def tool_names(self) -> list[str]:
+        return list(CSV_ALLOWED_TOOLS if self.layer == "csv" else ALLOWED_TOOLS)
 
     def dataset(self, settings: Settings) -> str:
         if self.layer == "bronze":
             return settings.gcp_bq_dataset_bronze
-        return settings.gcp_bq_dataset_marts
+        if self.layer == "marts":
+            return settings.gcp_bq_dataset_marts
+        raise ValueError(f"o braço {self.key} lê arquivos, não um dataset")
+
+    def prompt(self, settings: Settings, glossary: str | None) -> str:
+        if self.layer == "csv":
+            return csv_system_prompt(self.tables)
+        return system_prompt(
+            self.dataset(settings), self.tables, glossary if self.glossary else None
+        )
 
 
 ARMS: dict[str, Arm] = {
     "A": Arm("A", "bronze cru", "bronze", skill=False, glossary=False),
     "B": Arm("B", "bronze + skill", "bronze", skill=True, glossary=False),
     "C": Arm("C", "mart dbt", "marts", skill=False, glossary=True),
+    "D": Arm("D", "CSV cru", "csv", skill=False, glossary=False),
 }
 
 
@@ -147,18 +173,16 @@ def build_options(
     workspace: Workspace,
     glossary: str | None,
 ) -> ClaudeAgentOptions:
-    allowed = [*ALLOWED_TOOLS, STRUCTURED_OUTPUT_TOOL, *(["Skill"] if arm.skill else [])]
+    allowed = [*arm.tool_names, STRUCTURED_OUTPUT_TOOL, *(["Skill"] if arm.skill else [])]
     env = {**provider_env(settings), "CLAUDE_CONFIG_DIR": str(workspace.config_dir)}
     return ClaudeAgentOptions(
         model=model,
-        system_prompt=system_prompt(
-            arm.dataset(settings), arm.tables, glossary if arm.glossary else None
-        ),
-        mcp_servers={SERVER_NAME: server},
+        system_prompt=arm.prompt(settings, glossary),
+        mcp_servers={arm.server_name: server},
         strict_mcp_config=True,
         tools=["Skill"] if arm.skill else [],
         disallowed_tools=list(ALWAYS_ON_TOOLS),
-        allowed_tools=list(ALLOWED_TOOLS),
+        allowed_tools=arm.tool_names,
         skills=[SKILL_NAME] if arm.skill else [],
         setting_sources=["project"] if arm.skill else [],
         can_use_tool=tool_gate(allowed),

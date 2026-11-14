@@ -233,6 +233,61 @@ def tokens(run: dict[str, Any]) -> tuple[int, int]:
     return inp, int(usage.get("output_tokens") or 0)
 
 
+# Tipos de token como o SDK registra no model_usage, com o nome usado no resumo.
+_TOKEN_TYPES = (
+    ("inputTokens", "entrada"),
+    ("cacheCreationInputTokens", "cache_escrita"),
+    ("cacheReadInputTokens", "cache_leitura"),
+    ("outputTokens", "saida"),
+)
+_USAGE_KEYS = {
+    "inputTokens": "input_tokens",
+    "cacheCreationInputTokens": "cache_creation_input_tokens",
+    "cacheReadInputTokens": "cache_read_input_tokens",
+    "outputTokens": "output_tokens",
+}
+
+
+def usage_by_model(run: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Tokens by type and cost per model the run called.
+
+    The SDK's model_usage lists every model, including the small auxiliary call
+    Claude Code makes on its own; the top-level usage covers only the agent's
+    model and is the fallback for records without model_usage.
+    """
+    by_model = run.get("model_usage") or {}
+    if not by_model and run.get("usage"):
+        usage = run["usage"]
+        by_model = {
+            str(run.get("model_resolved") or "?"): {
+                **{k: usage.get(v) or 0 for k, v in _USAGE_KEYS.items()},
+                "costUSD": run.get("cost_usd") or 0,
+            }
+        }
+    return {
+        model: {
+            **{name: float(u.get(key) or 0) for key, name in _TOKEN_TYPES},
+            "custo_usd": float(u.get("costUSD") or 0),
+        }
+        for model, u in by_model.items()
+    }
+
+
+def _add_usage(total: dict[str, dict[str, float]], run: dict[str, Any]) -> None:
+    for model, usage in usage_by_model(run).items():
+        acc = total.setdefault(model, {"runs": 0.0})
+        acc["runs"] += 1
+        for key, value in usage.items():
+            acc[key] = acc.get(key, 0.0) + value
+
+
+def token_totals(by_model: dict[str, dict[str, float]]) -> dict[str, float]:
+    """Tokens by type across models, plus the grand total."""
+    totals = {name: sum(u.get(name, 0.0) for u in by_model.values()) for _, name in _TOKEN_TYPES}
+    totals["total"] = sum(totals.values())
+    return totals
+
+
 def bq_bytes(run: dict[str, Any]) -> int:
     """Bytes the executed queries read, from the cache-free dry-run estimate."""
     return sum(
@@ -246,11 +301,28 @@ def _mean(values: list[float]) -> float | None:
 
 # --- Tropeços no caminho ---------------------------------------------------
 # Um run pode acertar no fim depois de cair numa armadilha no meio. Estas
-# heurísticas olham o SQL executado com sucesso; servem para contar a
-# história, e cada caso vale conferir no transcript.
+# heurísticas olham o SQL executado (e, no CSV, os erros do DuckDB); servem
+# para contar a história, e cada caso vale conferir no transcript.
 _SUM = re.compile(r"\bsum\s*\(")
 _RAW_CAST = re.compile(r"(?:safe_)?cast\s*\(\s*premio_\w+\s+as\b")
 _COGRUPO_FILTER = re.compile(r"\bcogrupo\s*(?:=|in\b|like\b)")
+# Registros antigos não têm "layer"; a camada sai do braço.
+_LAYER_BY_ARM = {"A": "bronze", "B": "bronze", "C": "marts", "D": "csv"}
+# Erros do DuckDB que denunciam cada armadilha do arquivo cru.
+_CSV_ERROR_TRAPS = (
+    ("encoding_errado", re.compile(r"unicode|not latin-1 encoded|does not support the encoding")),
+    ("tipo_inferido_errado", re.compile(r"this type was auto-detected")),
+    ("somou_coluna_de_texto", re.compile(r"sum\(varchar\)")),
+    ("converteu_sem_trocar_a_virgula", re.compile(r"could not convert string '[^']*,")),
+)
+# read_csv('<arquivo>', ..., ignore_errors=true): o DuckDB descarta em silêncio as
+# linhas que não consegue ler. Nos cadastros (Windows-1252) são 29% das linhas.
+_IGNORE_ERRORS_READ = re.compile(r"read_csv\s*\(\s*'([^']+)'[^)]*?ignore_errors\s*=\s*true")
+_CSV_FACT = "ses_seguros.csv"
+
+
+def layer_of(run: dict[str, Any]) -> str:
+    return str(run.get("layer") or _LAYER_BY_ARM.get(str(run.get("arm")), "bronze"))
 
 
 def _sums_every_snapshot(sql: str) -> bool:
@@ -259,42 +331,69 @@ def _sums_every_snapshot(sql: str) -> bool:
 
 
 def trap_hits(run: dict[str, Any]) -> list[str]:
-    """Traps the run's successful queries fell into, even if the final answer was right."""
+    """Traps the run's queries fell into, even if the final answer was right.
+
+    The snapshot trap only exists in bronze: a CSV from the zip is one load.
+    """
+    layer = layer_of(run)
     hits: set[str] = set()
     for q in run.get("queries", []):
-        if q["status"] != "ok":
-            continue
         sql = q["sql"].lower()
-        if _sums_every_snapshot(sql):
-            hits.add("somou_todos_os_snapshots")
-        if _RAW_CAST.search(sql):
-            hits.add("converteu_sem_trocar_a_virgula")
-        if run["question"] == "q3" and _COGRUPO_FILTER.search(sql):
-            hits.add("usou_cogrupo_como_ramo")
+        if q["status"] == "ok":
+            if layer == "bronze" and _sums_every_snapshot(sql):
+                hits.add("somou_todos_os_snapshots")
+            if layer != "marts" and _RAW_CAST.search(sql):
+                hits.add("converteu_sem_trocar_a_virgula")
+            if run["question"] == "q3" and _COGRUPO_FILTER.search(sql):
+                hits.add("usou_cogrupo_como_ramo")
+            if layer == "csv" and _drops_cadastro_rows(sql):
+                hits.add("descartou_linhas_com_ignore_errors")
+        elif q["status"] == "error" and layer == "csv":
+            error = (q.get("error") or "").lower()
+            hits.update(name for name, pattern in _CSV_ERROR_TRAPS if pattern.search(error))
     return sorted(hits)
+
+
+def _drops_cadastro_rows(sql: str) -> bool:
+    """A lookup CSV read with ignore_errors, which silently drops rows."""
+    return any(
+        Path(name).name.lower() != _CSV_FACT for name in _IGNORE_ERRORS_READ.findall(sql.lower())
+    )
 
 
 def answer_path(run: dict[str, Any], score: Score) -> str:
     """How a run got to its answer, not just whether the answer matched.
 
     * ``errado``: the answer did not match.
-    * ``certo_sem_filtrar``: right, but every aggregate the answer cites summed
-      all snapshots. It happens when the inflation cancels out (a ratio) or when
-      the period exists in only one load. Right by luck of the data.
-    * ``certo_corrigindo``: some query summed all snapshots, but the answer
-      rests on queries that filter the load.
-    * ``certo_limpo``: never fell into the trap.
+    * ``certo_por_sorte``: right, but only because of how this data happens to
+      be. In bronze, every aggregate the answer cites summed all loads (the
+      inflation cancels in a ratio, or the period exists in one load only). In
+      the CSV arm, the aggregate the answer cites joins a lookup file read with
+      ignore_errors, which silently drops the rows it can't decode.
+    * ``certo_corrigindo``: fell into a trap on the way (bronze: summed all
+      loads; CSV: encoding, type or decimal comma) but the answer rests on
+      queries that got past it.
+    * ``certo_limpo``: never fell into a trap.
     """
     if not score.correct:
         return "errado"
     ok = {q["query_no"]: q for q in run.get("queries", []) if q["status"] == "ok"}
-    sums = {n: q for n, q in ok.items() if _SUM.search(q["sql"].lower())}
     answer = run.get("answer") or {}
-    cited = [n for n in answer.get("queries_usadas") or [] if n in sums]
-    if not cited and sums:
-        cited = [max(sums)]
-    if cited and all(_sums_every_snapshot(sums[n]["sql"]) for n in cited):
-        return "certo_sem_filtrar"
+    if layer_of(run) == "csv":
+        cited = [ok[n] for n in answer.get("queries_usadas") or [] if n in ok]
+        if not cited and ok:
+            cited = [ok[max(ok)]]
+        # Sorte só quando a query que soma também junta o cadastro com perdas;
+        # uma listagem à parte, só para contexto, não muda o número.
+        if any(_SUM.search(q["sql"].lower()) and _drops_cadastro_rows(q["sql"]) for q in cited):
+            return "certo_por_sorte"
+        return "certo_corrigindo" if trap_hits(run) else "certo_limpo"
+    sums = {n: q for n, q in ok.items() if _SUM.search(q["sql"].lower())}
+    cited_sums = [n for n in answer.get("queries_usadas") or [] if n in sums]
+    if not cited_sums and sums:
+        cited_sums = [max(sums)]
+    if cited_sums and all(_sums_every_snapshot(sums[n]["sql"]) for n in cited_sums):
+        return "certo_por_sorte"
     if any(_sums_every_snapshot(q["sql"]) for q in ok.values()):
         return "certo_corrigindo"
     return "certo_limpo"
@@ -323,19 +422,24 @@ def summarize(runs: list[dict[str, Any]], truth: dict[str, Any]) -> dict[str, An
         bq_usd = [bq_bytes(r) / _TIB * BQ_USD_PER_TIB for r, _ in rows]
         total = sum(llm) + sum(bq_usd)
         tok = [tokens(r) for r, _ in rows]
+        arm_usage: dict[str, dict[str, float]] = {}
+        for r, _ in rows:
+            _add_usage(arm_usage, r)
+        arm_tokens = token_totals(arm_usage)
         paths = [(r, s, answer_path(r, s)) for r, s in rows]
         by_question = {
             qid: {
                 "certos": sum(s.correct for r, s in rows if r["question"] == qid),
                 "runs": sum(1 for r, _ in rows if r["question"] == qid),
-                "sem_filtrar": sum(
-                    1 for r, _, p in paths if r["question"] == qid and p == "certo_sem_filtrar"
+                "por_sorte": sum(
+                    1 for r, _, p in paths if r["question"] == qid and p == "certo_por_sorte"
                 ),
             }
             for qid in truth["questions"]
         }
         arms[arm] = {
             "label": rows[0][0].get("arm_label", arm),
+            "camada": layer_of(rows[0][0]),
             "runs": len(rows),
             "certos": correct,
             "acerto": correct / len(rows),
@@ -348,6 +452,11 @@ def summarize(runs: list[dict[str, Any]], truth: dict[str, Any]) -> dict[str, An
             "runs_sem_custo": len(rows) - len(llm),
             "tokens_entrada_medio": _mean([float(t[0]) for t in tok]),
             "tokens_saida_medio": _mean([float(t[1]) for t in tok]),
+            # Todos os modelos e todos os tipos de token (ver usage_by_model).
+            "tokens": arm_tokens,
+            "tokens_por_run": arm_tokens["total"] / len(rows),
+            "tokens_por_certo": arm_tokens["total"] / correct if correct else None,
+            "modelos": arm_usage,
             "turnos_medio": _mean([float(r.get("num_turns") or 0) for r, _ in rows]),
             "queries_medio": _mean([float(len(r.get("queries", []))) for r, _ in rows]),
             "bytes_bq_medio": _mean([float(bq_bytes(r)) for r, _ in rows]),
@@ -362,15 +471,23 @@ def summarize(runs: list[dict[str, Any]], truth: dict[str, Any]) -> dict[str, An
             "certos_depois_de_tropecar": sum(1 for r, s in rows if s.correct and trap_hits(r)),
             "caminhos": {
                 p: sum(1 for _, _, q in paths if q == p)
-                for p in ("certo_limpo", "certo_corrigindo", "certo_sem_filtrar", "errado")
+                for p in ("certo_limpo", "certo_corrigindo", "certo_por_sorte", "errado")
             },
         }
 
     started = sorted(r["started_at"] for r in runs if r.get("started_at"))
+    all_usage: dict[str, dict[str, float]] = {}
+    for r in runs:
+        _add_usage(all_usage, r)
     return {
         "meta": {
             "runs": len(runs),
             "modelos": dict(Counter(r.get("model_resolved") or "?" for r in runs)),
+            "modelos_uso": all_usage,
+            "tokens": token_totals(all_usage),
+            "claude_code": dict(
+                Counter(str((r.get("init") or {}).get("claude_code_version") or "?") for r in runs)
+            ),
             "snapshot": truth["snapshot"],
             "snapshots_k": truth["snapshots_k"],
             "inicio": started[0] if started else None,
@@ -402,6 +519,7 @@ def summarize(runs: list[dict[str, Any]], truth: dict[str, Any]) -> dict[str, An
                 "answer_source": r.get("answer_source"),
                 "tropecos": ";".join(trap_hits(r)),
                 "caminho": answer_path(r, s),
+                "tokens": token_totals(usage_by_model(r))["total"],
             }
             for r, s in scored
         ],
@@ -426,18 +544,46 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"Acerto: valor a até {meta['tolerancia_valor']:.1%} do gabarito; percentual a até "
         f"{meta['tolerancia_pp']} p.p.",
         "",
-        "| Braço | Acerto | Custo médio por run | Custo por resposta certa | Tokens de entrada "
-        "| Tokens de saída | Turnos | Queries | MiB lidos no BigQuery | Tempo |",
+        "| Braço | Acerto | Custo médio por run | Custo por resposta certa | Tokens por run "
+        "| Tokens por resposta certa | Turnos | Queries | MiB lidos no BigQuery | Tempo |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for key, a in arms.items():
         mib = None if a["bytes_bq_medio"] is None else a["bytes_bq_medio"] / 1024**2
+        read = "local" if a["camada"] == "csv" else _num(mib, "{:.1f}")
         lines.append(
             f"| {key}, {a['label']} | {a['certos']}/{a['runs']} | {_usd(a['custo_medio_usd'])} "
-            f"| {_usd(a['custo_por_certo_usd'])} | {_num(a['tokens_entrada_medio'])} "
-            f"| {_num(a['tokens_saida_medio'])} | {_num(a['turnos_medio'], '{:.1f}')} "
-            f"| {_num(a['queries_medio'], '{:.1f}')} | {_num(mib, '{:.1f}')} "
+            f"| {_usd(a['custo_por_certo_usd'])} | {_num(a['tokens_por_run'])} "
+            f"| {_num(a['tokens_por_certo'])} | {_num(a['turnos_medio'], '{:.1f}')} "
+            f"| {_num(a['queries_medio'], '{:.1f}')} | {read} "
             f"| {_num(a['tempo_medio_s'])} s |"
+        )
+
+    usage = meta["modelos_uso"]
+    lines += ["", "## Modelos e tokens", ""]
+    for model, u in sorted(usage.items(), key=lambda item: -item[1]["custo_usd"]):
+        total = sum(u.get(name, 0.0) for _, name in _TOKEN_TYPES)
+        lines.append(
+            f"- `{model}`: chamado em {u['runs']:.0f} runs, {total:,.0f} tokens, "
+            f"{_usd(u['custo_usd'])} no total."
+        )
+    versions = ", ".join(f"{v} ({n})" for v, n in meta["claude_code"].items())
+    lines += [
+        f"- Claude Code: {versions}.",
+        "",
+        "Tokens somados por braço, de todos os modelos:",
+        "",
+        "| Braço | Entrada | Escrita de cache | Leitura de cache | Saída | Total "
+        "| Por run | Por resposta certa |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for key, a in arms.items():
+        t = a["tokens"]
+        lines.append(
+            f"| {key} | {t['entrada']:,.0f} | {t['cache_escrita']:,.0f} "
+            f"| {t['cache_leitura']:,.0f} | {t['saida']:,.0f} | {t['total']:,.0f} "
+            f"| {_num(a['tokens_por_run'], '{:,.0f}')} "
+            f"| {_num(a['tokens_por_certo'], '{:,.0f}')} |"
         )
 
     qids = list(summary["perguntas"])
@@ -459,19 +605,22 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Como cada run chegou à resposta",
         "",
-        "Certo limpo: nunca somou todas as cargas. Certo corrigindo: somou, mas a resposta "
-        "se apoia em queries que filtram a carga. Certo sem filtrar: todas as somas que a "
-        "resposta cita pegaram todas as cargas; acertou porque a inflação se cancela (uma "
-        "razão) ou porque o período só existe numa carga. Heurística sobre o SQL executado.",
+        "Certo limpo: não caiu em armadilha. Certo corrigindo: caiu (na bronze, somou "
+        "todas as cargas; no CSV, errou encoding, tipo ou vírgula), mas a resposta se apoia "
+        "em queries corretas. Certo por sorte: bateu com o gabarito por causa de como este "
+        "dado é. Na bronze, todas as somas que a resposta cita pegaram todas as cargas (a "
+        "inflação se cancela numa razão, ou o período só existe numa carga). No CSV, a soma "
+        "que a resposta cita junta um cadastro lido com ignore_errors, que descarta em "
+        "silêncio as linhas que não consegue ler. Heurística sobre o SQL executado.",
         "",
-        "| Braço | Certo limpo | Certo corrigindo | Certo sem filtrar | Errado |",
+        "| Braço | Certo limpo | Certo corrigindo | Certo por sorte | Errado |",
         "| --- | --- | --- | --- | --- |",
     ]
     for key, a in arms.items():
         c = a["caminhos"]
         lines.append(
             f"| {key} | {c['certo_limpo']} | {c['certo_corrigindo']} "
-            f"| {c['certo_sem_filtrar']} | {c['errado']} |"
+            f"| {c['certo_por_sorte']} | {c['errado']} |"
         )
     lines += ["", "Armadilhas em que ao menos uma query caiu, por braço:", ""]
     for key, a in arms.items():

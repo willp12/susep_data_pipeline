@@ -29,7 +29,8 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group agent
+        # eval: DuckDB, used by the precision eval's CSV arm and its tests.
+        run: uv sync --group agent --group eval
 
       - name: Ruff (lint)
         run: uv run ruff check .

@@ -195,7 +195,7 @@ def test_summarize_reports_cost_per_correct_answer_deterministically() -> None:
     assert arm_a["erros"] == {"snapshot_duplicado": 1}
     assert arm_c["certos"] == 2
     assert arm_c["custo_por_certo_usd"] == arm_c["custo_total_usd"] / 2
-    assert arm_a["por_pergunta"]["q5"] == {"certos": 1, "runs": 1, "sem_filtrar": 0}
+    assert arm_a["por_pergunta"]["q5"] == {"certos": 1, "runs": 1, "por_sorte": 0}
 
 
 def test_trap_hits_catch_shortcuts_even_when_the_answer_is_right() -> None:
@@ -243,11 +243,11 @@ def _path(answer: dict[str, Any], sqls: list[str], qid: str = "q1") -> str:
 
 def test_answer_path_tells_luck_from_correction() -> None:
     right = {"valor_reais": 1_000_000.0}
-    assert _path({**right, "queries_usadas": [1]}, [_UNFILTERED]) == "certo_sem_filtrar"
+    assert _path({**right, "queries_usadas": [1]}, [_UNFILTERED]) == "certo_por_sorte"
     assert _path({**right, "queries_usadas": [2]}, [_UNFILTERED, _FILTERED]) == "certo_corrigindo"
     assert _path({**right, "queries_usadas": [1]}, [_FILTERED]) == "certo_limpo"
     # Sem citação, vale a última soma executada.
-    assert _path(right, [_FILTERED, _UNFILTERED]) == "certo_sem_filtrar"
+    assert _path(right, [_FILTERED, _UNFILTERED]) == "certo_por_sorte"
     assert _path({"valor_reais": 13_000_000.0}, [_UNFILTERED]) == "errado"
 
 
@@ -255,8 +255,125 @@ def test_summary_counts_paths_per_arm_and_question() -> None:
     lucky = _run("A", "q5", {"variacao_percentual": 5.25, "queries_usadas": [1]}, 0.1)
     lucky["queries"] = [{"query_no": 1, "status": "ok", "sql": _UNFILTERED}]
     arm = summarize([lucky], TRUTH)["bracos"]["A"]
-    assert arm["caminhos"]["certo_sem_filtrar"] == 1
-    assert arm["por_pergunta"]["q5"]["sem_filtrar"] == 1
+    assert arm["caminhos"]["certo_por_sorte"] == 1
+    assert arm["por_pergunta"]["q5"]["por_sorte"] == 1
+
+
+def test_csv_runs_have_their_own_traps_and_no_snapshot_trap() -> None:
+    right_sum = (
+        "SELECT SUM(CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38,9))) "
+        "FROM read_csv('Ses_seguros.csv', all_varchar=true) WHERE damesano LIKE '2024%'"
+    )
+    run = _run("D", "q1", {"valor_reais": 1_000_000.0, "queries_usadas": [3]}, 0.1, layer="csv")
+    run["queries"] = [
+        {
+            "query_no": 1,
+            "status": "error",
+            "sql": "SELECT SUM(premio_direto) FROM read_csv('Ses_seguros.csv')",
+            "error": "run_sql falhou: Binder Error: No function matches 'sum(VARCHAR)'.",
+        },
+        {
+            "query_no": 2,
+            "status": "error",
+            "sql": "SELECT * FROM read_csv('Ses_cias.csv', encoding='latin-1')",
+            "error": "run_sql falhou: Invalid Input Error: File is not latin-1 encoded",
+        },
+        {"query_no": 3, "status": "ok", "sql": right_sum},
+    ]
+    assert trap_hits(run) == ["encoding_errado", "somou_coluna_de_texto"]
+    assert answer_path(run, score_run(run, TRUTH)) == "certo_corrigindo"
+
+    # Sem "layer" no registro, a camada sai do braço; e somar o CSV não é somar cargas.
+    clean = _run("D", "q1", {"valor_reais": 1_000_000.0}, 0.1)
+    clean["queries"] = [{"query_no": 1, "status": "ok", "sql": right_sum}]
+    assert trap_hits(clean) == []
+    assert answer_path(clean, score_run(clean, TRUTH)) == "certo_limpo"
+
+
+def test_csv_answer_resting_on_ignore_errors_in_a_lookup_is_luck() -> None:
+    lucky_sql = (
+        "SELECT s.coenti, c.Noenti, SUM(CAST(REPLACE(s.premio_direto, ',', '.') AS DOUBLE)) "
+        "FROM read_csv('Ses_seguros.csv', all_varchar=true) s "
+        "LEFT JOIN read_csv('Ses_cias.csv', delim=';', ignore_errors=true) c "
+        "ON s.coenti = c.Coenti GROUP BY 1, 2"
+    )
+    run = _run("D", "q1", {"valor_reais": 1_000_000.0, "queries_usadas": [1]}, 0.1, layer="csv")
+    run["queries"] = [{"query_no": 1, "status": "ok", "sql": lucky_sql}]
+    assert "descartou_linhas_com_ignore_errors" in trap_hits(run)
+    assert answer_path(run, score_run(run, TRUTH)) == "certo_por_sorte"
+
+    # Listar o cadastro com ignore_errors à parte, só para contexto, e somar direto
+    # no fato: o número não depende das linhas perdidas.
+    listing = _run("D", "q3", {"valor_reais": 1_000_000.0, "queries_usadas": [1, 2]}, 0.1)
+    listing["question"] = "q1"
+    listing["queries"] = [
+        {
+            "query_no": 1,
+            "status": "ok",
+            "sql": "SELECT coramo, noramo FROM read_csv('Ses_ramos.csv', ignore_errors=true)",
+        },
+        {
+            "query_no": 2,
+            "status": "ok",
+            "sql": "SELECT SUM(CAST(REPLACE(premio_direto, ',', '.') AS DOUBLE)) "
+            "FROM read_csv('Ses_seguros.csv') WHERE SUBSTR(coramo, 1, 2) = '05'",
+        },
+    ]
+    assert answer_path(listing, score_run(listing, TRUTH)) == "certo_corrigindo"
+
+    # No fato, que é ASCII, ignore_errors não descarta nada: não é sorte.
+    fact_only = _run("D", "q1", {"valor_reais": 1_000_000.0}, 0.1, layer="csv")
+    fact_only["queries"] = [
+        {
+            "query_no": 1,
+            "status": "ok",
+            "sql": "SELECT SUM(x) FROM read_csv('Ses_seguros.csv', ignore_errors=true)",
+        }
+    ]
+    assert answer_path(fact_only, score_run(fact_only, TRUTH)) == "certo_limpo"
+
+
+def test_tokens_add_up_across_models_and_types() -> None:
+    usage = {
+        "claude-opus-4-7": {
+            "inputTokens": 25,
+            "outputTokens": 967,
+            "cacheReadInputTokens": 21011,
+            "cacheCreationInputTokens": 3624,
+            "costUSD": 0.0574555,
+        },
+        "claude-haiku-4-5-20251001": {
+            "inputTokens": 470,
+            "outputTokens": 17,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "costUSD": 0.000555,
+        },
+    }
+    with_models = _run("C", "q1", {"valor_reais": 1_000_000.0}, 0.058, model_usage=usage)
+    # Registro sem model_usage: vale o usage do modelo do agente.
+    usage_only = _run(
+        "C",
+        "q5",
+        {"variacao_percentual": 5.25},
+        0.02,
+        model_resolved="claude-opus-4-7",
+        usage={"input_tokens": 10, "output_tokens": 90, "cache_read_input_tokens": 900},
+    )
+    summary = summarize([with_models, usage_only], TRUTH)
+    arm = summary["bracos"]["C"]
+
+    assert arm["tokens"] == {
+        "entrada": 505.0,
+        "cache_escrita": 3624.0,
+        "cache_leitura": 21911.0,
+        "saida": 1074.0,
+        "total": 27114.0,
+    }
+    assert arm["tokens_por_certo"] == 27114.0 / 2
+    assert arm["modelos"]["claude-haiku-4-5-20251001"]["runs"] == 1
+    assert arm["modelos"]["claude-opus-4-7"]["runs"] == 2
+    assert summary["meta"]["tokens"]["total"] == 27114.0
 
 
 def test_summarize_has_no_cost_per_correct_when_nothing_is_right() -> None:

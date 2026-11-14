@@ -20,6 +20,7 @@ from evals.precisao.arms import (
     scrub_inherited_env,
     tool_gate,
 )
+from evals.precisao.csvtools import CSV_ALLOWED_TOOLS, CSV_TOOL_DESCRIPTIONS
 from evals.precisao.prompts import system_prompt
 from evals.precisao.questions import QUESTIONS
 from evals.precisao.tools import TOOL_DESCRIPTIONS, cap_message
@@ -87,7 +88,7 @@ def test_mart_arm_prompt_carries_the_glossary() -> None:
     assert "susep_ses_bronze" not in prompt
 
 
-@pytest.mark.parametrize("key", ["A", "C"])
+@pytest.mark.parametrize("key", ["A", "C", "D"])
 def test_arms_without_skill_load_nothing_from_disk(key: str) -> None:
     workspace = prepare_workspace(ARMS[key])
     try:
@@ -105,6 +106,39 @@ def test_arms_without_skill_load_nothing_from_disk(key: str) -> None:
     finally:
         workspace.cleanup()
     assert not workspace.root.exists()
+
+
+# O que o braço D precisa descobrir sozinho nos CSVs.
+CSV_RULE_TOKENS = (
+    "latin",
+    "1252",
+    "encoding",
+    "utf",
+    "all_varchar",
+    "decimal_separator",
+    "sample_size",
+    "delim",
+    "quote",
+    "trim(",
+)
+
+
+def test_csv_arm_gets_its_own_tools_and_no_rule() -> None:
+    arm = ARMS["D"]
+    prompt = arm.prompt(SETTINGS, "glossário do mart")
+    assert "Ses_seguros.csv" in prompt
+    assert "glossário do mart" not in prompt
+    for text in (prompt, *CSV_TOOL_DESCRIPTIONS.values()):
+        leaked = [t for t in (*RULE_TOKENS, *CSV_RULE_TOKENS) if t in text.lower()]
+        assert not leaked, f"regra vazando em {text[:60]!r}: {leaked}"
+
+    workspace = prepare_workspace(arm)
+    try:
+        options = _options("D", workspace)
+        assert options.allowed_tools == CSV_ALLOWED_TOOLS
+        assert list(options.mcp_servers) == ["csv"]
+    finally:
+        workspace.cleanup()
 
 
 def test_skill_arm_loads_only_the_skill() -> None:

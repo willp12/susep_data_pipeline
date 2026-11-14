@@ -58,6 +58,7 @@ class QueryRecord:
     bytes_processed: int | None = None
     row_count: int | None = None
     error: str | None = None
+    elapsed_ms: int | None = None  # só o braço D mede (DuckDB local)
 
 
 @dataclass

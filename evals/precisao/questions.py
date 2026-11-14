@@ -4,15 +4,18 @@ Todas giram em torno do prêmio direto, e cada uma cai numa armadilha que já
 quebrou o projeto de verdade. O texto enviado ao agente é o mesmo nos três
 braços.
 
-Cada pergunta tem dois SQLs de referência, que são caminhos independentes para
-a mesma resposta: um lê o mart, o outro aplica as regras à mão sobre a bronze.
-O gabarito só vale se os dois baterem (ver truth.py). Os placeholders
-``{bronze}`` e ``{marts}`` recebem os datasets do config.
+Cada pergunta tem três SQLs de referência, caminhos independentes para a mesma
+resposta: um lê o mart, outro aplica as regras à mão sobre a bronze e o
+terceiro, em DuckDB, faz o mesmo direto nos CSVs do zip da SUSEP. O gabarito
+só vale se mart e bronze baterem (truth.py); os CSVs são conferidos contra ele
+(csvdata.py). Os placeholders ``{bronze}`` e ``{marts}`` recebem os datasets do
+config, e ``{dir}`` a pasta dos CSVs.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 AnswerKind = Literal["valor", "mes_valor", "ranking", "percentual"]
@@ -26,6 +29,7 @@ class Question:
     trap: str
     mart_sql: str
     bronze_sql: str
+    csv_sql: str
 
 
 QUESTIONS: tuple[Question, ...] = (
@@ -50,6 +54,12 @@ WITH snap AS (
 )
 SELECT SUM(SAFE_CAST(REPLACE(premio_direto, ',', '.') AS NUMERIC)) AS valor
 FROM snap
+WHERE damesano BETWEEN '202401' AND '202412'
+""",
+        csv_sql="""
+SELECT SUM(TRY_CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38, 9))) AS valor
+FROM read_csv('{dir}/Ses_seguros.csv', delim=';', header=true,
+              all_varchar=true)
 WHERE damesano BETWEEN '202401' AND '202412'
 """,
     ),
@@ -80,6 +90,19 @@ FROM snap
 WHERE damesano = (SELECT MAX(damesano) FROM snap)
 GROUP BY mes
 """,
+        csv_sql="""
+WITH fato AS (
+  SELECT damesano, premio_direto
+  FROM read_csv('{dir}/Ses_seguros.csv', delim=';', header=true,
+                all_varchar=true)
+)
+SELECT
+  SUBSTR(damesano, 1, 4) || '-' || SUBSTR(damesano, 5, 2) AS mes,
+  SUM(TRY_CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38, 9))) AS valor
+FROM fato
+WHERE damesano = (SELECT MAX(damesano) FROM fato)
+GROUP BY mes
+""",
     ),
     Question(
         qid="q3",
@@ -108,6 +131,23 @@ grupo AS (
 )
 SELECT SUM(SAFE_CAST(REPLACE(premio_direto, ',', '.') AS NUMERIC)) AS valor
 FROM snap
+WHERE SUBSTR(coramo, 1, 2) = (SELECT codigo FROM grupo)
+  AND damesano BETWEEN '202401' AND '202412'
+""",
+        csv_sql="""
+WITH fato AS (
+  SELECT damesano, coramo, premio_direto
+  FROM read_csv('{dir}/Ses_seguros.csv', delim=';', header=true,
+                all_varchar=true)
+),
+grupo AS (
+  SELECT TRIM(GRACODIGO) AS codigo
+  FROM read_csv('{dir}/ses_gruposramos.csv', delim=';', header=true,
+                all_varchar=true, quote='')
+  WHERE GRANOME LIKE '%Automóvel%'
+)
+SELECT SUM(TRY_CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38, 9))) AS valor
+FROM fato
 WHERE SUBSTR(coramo, 1, 2) = (SELECT codigo FROM grupo)
   AND damesano BETWEEN '202401' AND '202412'
 """,
@@ -152,6 +192,30 @@ LEFT JOIN cias ON cias.codigo = TRIM(agg.coenti)
 ORDER BY agg.valor DESC
 LIMIT 5
 """,
+        csv_sql="""
+WITH fato AS (
+  SELECT damesano, coenti, premio_direto
+  FROM read_csv('{dir}/Ses_seguros.csv', delim=';', header=true,
+                all_varchar=true)
+),
+agg AS (
+  SELECT coenti, SUM(TRY_CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38, 9))) AS valor
+  FROM fato
+  WHERE damesano BETWEEN '202401' AND '202412'
+  GROUP BY coenti
+),
+cias AS (
+  SELECT TRIM(Coenti) AS codigo, ANY_VALUE(TRIM(Noenti)) AS nome
+  FROM read_csv('{dir}/Ses_cias.csv', delim=';', header=true,
+                all_varchar=true, quote='', strict_mode=false, null_padding=true)
+  GROUP BY codigo
+)
+SELECT agg.coenti AS codigo, cias.nome, agg.valor
+FROM agg
+LEFT JOIN cias ON cias.codigo = TRIM(agg.coenti)
+ORDER BY agg.valor DESC
+LIMIT 5
+""",
     ),
     Question(
         qid="q5",
@@ -180,6 +244,18 @@ SELECT
 FROM snap
 WHERE damesano BETWEEN '202301' AND '202412'
 """,
+        csv_sql="""
+WITH fato AS (
+  SELECT damesano, TRY_CAST(REPLACE(premio_direto, ',', '.') AS DECIMAL(38, 9)) AS premio
+  FROM read_csv('{dir}/Ses_seguros.csv', delim=';', header=true,
+                all_varchar=true)
+)
+SELECT
+  SUM(CASE WHEN starts_with(damesano, '2023') THEN premio ELSE 0 END) AS v2023,
+  SUM(CASE WHEN starts_with(damesano, '2024') THEN premio ELSE 0 END) AS v2024
+FROM fato
+WHERE damesano BETWEEN '202301' AND '202412'
+""",
     ),
 )
 
@@ -189,6 +265,11 @@ QUESTIONS_BY_ID: dict[str, Question] = {q.qid: q for q in QUESTIONS}
 def render_sql(template: str, *, bronze: str, marts: str) -> str:
     """Fill the dataset placeholders. Datasets come from settings, never from input."""
     return template.format(bronze=bronze, marts=marts)
+
+
+def render_csv_sql(template: str, files: Path) -> str:
+    """Fill the CSV folder placeholder with an absolute, forward-slash path."""
+    return template.format(dir=files.resolve().as_posix())
 
 
 # Formato da resposta, pedido ao agente via output_format (JSON schema). Um

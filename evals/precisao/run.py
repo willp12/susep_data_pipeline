@@ -2,10 +2,11 @@
 
     uv run python -m evals.precisao.run --out evals/precisao/results/full --reps 3
 
-Grava ``runs.jsonl`` (uma linha por run), ``transcripts/<run_id>.json`` e
-``meta.json`` no diretório de saída. Retoma de onde parou: runs que terminaram
-são pulados, e os que caíram por infraestrutura (queda do CLI, timeout) rodam
-de novo. Com ``--dry-run``, só mostra o plano e os prompts, sem chamar nada.
+Grava ``runs.jsonl`` (uma linha por run), ``transcripts/<run_id>.json`` e um
+``meta-<hora>.json`` por execução no diretório de saída. Retoma de onde parou:
+runs que terminaram são pulados, e os que caíram por infraestrutura (queda do
+CLI, timeout) rodam de novo. Com ``--dry-run``, só mostra o plano e os prompts,
+sem chamar nada. O braço D precisa antes de ``python -m evals.precisao.csvdata``.
 """
 
 from __future__ import annotations
@@ -48,10 +49,11 @@ from evals.precisao.arms import (
     prepare_workspace,
     scrub_inherited_env,
 )
-from evals.precisao.prompts import system_prompt
+from evals.precisao.csvdata import csv_dir
+from evals.precisao.csvtools import CSV_FILES, CsvTools, build_csv_server
 from evals.precisao.questions import QUESTIONS, QUESTIONS_BY_ID, Question
 from evals.precisao.score import extract_answer, score_run
-from evals.precisao.tools import ALLOWED_TOOLS, SERVER_NAME, ArmTools, build_server
+from evals.precisao.tools import ArmTools, build_server
 from src.agent.glossary import build_glossary
 from src.agent.providers import require_provider_credentials
 from src.config import Settings, get_settings
@@ -157,12 +159,12 @@ def isolation_problems(init: dict[str, Any] | None, arm: Arm, workspace_name: st
         return ["sem mensagem de init"]
     problems: list[str] = []
     tools = _names(init.get("tools"))
-    expected = {*ALLOWED_TOOLS, STRUCTURED_OUTPUT_TOOL, *(["Skill"] if arm.skill else [])}
+    expected = {*arm.tool_names, STRUCTURED_OUTPUT_TOOL, *(["Skill"] if arm.skill else [])}
     if extra := tools - expected:
         problems.append(f"tools a mais: {sorted(extra)}")
-    if missing := set(ALLOWED_TOOLS) - tools:
+    if missing := set(arm.tool_names) - tools:
         problems.append(f"tools faltando: {sorted(missing)}")
-    if (servers := _names(init.get("mcp_servers"))) != {SERVER_NAME}:
+    if (servers := _names(init.get("mcp_servers"))) != {arm.server_name}:
         problems.append(f"servidores MCP: {sorted(servers)}")
     # O init lista também as skills embutidas do CLI. No B, o filtro `skills`
     # do SDK as esconde do modelo; em A e C, sem a tool Skill, nenhuma é
@@ -187,9 +189,20 @@ async def run_one(
     budget_usd: float,
     glossary: str,
     transcripts_dir: Path,
+    csv_files: Path | None = None,
 ) -> dict[str, Any]:
     arm, question = combo.arm, combo.question
-    tools = ArmTools(allowed_dataset=arm.dataset(settings), known_datasets=known_datasets(settings))
+    tools: ArmTools | CsvTools
+    if arm.layer == "csv":
+        if csv_files is None:
+            raise ValueError("o braço D precisa da pasta dos CSVs")
+        tools = CsvTools(data_dir=csv_files)
+        server = build_csv_server(tools)
+    else:
+        tools = ArmTools(
+            allowed_dataset=arm.dataset(settings), known_datasets=known_datasets(settings)
+        )
+        server = build_server(tools)
     workspace = prepare_workspace(arm)
     options = build_options(
         arm,
@@ -197,7 +210,7 @@ async def run_one(
         model=model,
         max_turns=max_turns,
         max_budget_usd=budget_usd,
-        server=build_server(tools),
+        server=server,
         workspace=workspace,
         glossary=glossary,
     )
@@ -205,6 +218,7 @@ async def run_one(
         "run_id": combo.run_id,
         "arm": arm.key,
         "arm_label": arm.label,
+        "layer": arm.layer,
         "question": question.qid,
         "rep": combo.rep,
         "order": order,
@@ -230,6 +244,8 @@ async def run_one(
     finally:
         record["wall_s"] = round(time.monotonic() - started, 1)
         workspace.cleanup()
+        if isinstance(tools, CsvTools):
+            tools.close()
 
     result = collector.result
     answer, source = extract_answer(result.structured_output if result else None, collector.texts)
@@ -278,9 +294,7 @@ def _print_plan(combos: list[Combo], settings: Settings, glossary: str) -> None:
     for i, combo in enumerate(combos, 1):
         print(f"  {i:3d}. {combo.run_id}")
     for arm in sorted({c.arm for c in combos}, key=lambda a: a.key):
-        prompt = system_prompt(
-            arm.dataset(settings), arm.tables, glossary if arm.glossary else None
-        )
+        prompt = arm.prompt(settings, glossary)
         skill = f"\n(e a skill {SKILL_NAME}, que o modelo decide abrir)" if arm.skill else ""
         print(f"\n===== system prompt do braço {arm.key} ({arm.label}) ====={skill}\n{prompt}")
 
@@ -300,6 +314,21 @@ async def main_async(args: argparse.Namespace, scrubbed: list[str]) -> int:
         _print_plan(combos, settings, glossary)
         return 0
 
+    truth = json.loads(args.truth.read_text(encoding="utf-8")) if args.truth.exists() else None
+    csv_files: Path | None = None
+    if any(ARMS[a].layer == "csv" for a in arms):
+        if args.csv_dir is None and truth is None:
+            print("ERRO: o braço D precisa do gabarito (--truth) ou de --csv-dir.", file=sys.stderr)
+            return 1
+        csv_files = args.csv_dir or csv_dir(truth["snapshot"] if truth else "")
+        if not all((csv_files / name).exists() for name in CSV_FILES):
+            print(
+                f"ERRO: faltam CSVs em {csv_files}. Rode antes: "
+                "uv run python -m evals.precisao.csvdata",
+                file=sys.stderr,
+            )
+            return 1
+
     out: Path = args.out
     transcripts_dir = out / "transcripts"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -307,12 +336,13 @@ async def main_async(args: argparse.Namespace, scrubbed: list[str]) -> int:
     previous = _load_records(runs_path)
     finished = {rid for rid, r in previous.items() if r["status"] == "ok"}
     spent = sum(float(r.get("cost_usd") or 0) for r in previous.values())
-    truth = json.loads(args.truth.read_text(encoding="utf-8")) if args.truth.exists() else None
 
-    (out / "meta.json").write_text(
+    # Um meta por execução: rodar um braço depois não apaga o registro das outras.
+    now = datetime.now(UTC)
+    (out / f"meta-{now:%Y%m%dT%H%M%SZ}.json").write_text(
         json.dumps(
             {
-                "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "started_at": now.isoformat(timespec="seconds"),
                 "model": args.model,
                 "arms": arms,
                 "questions": qids,
@@ -320,6 +350,7 @@ async def main_async(args: argparse.Namespace, scrubbed: list[str]) -> int:
                 "seed": args.seed,
                 "max_turns": args.max_turns,
                 "budget_usd_por_run": args.budget,
+                "csv_dir": str(csv_files) if csv_files else None,
                 "sdk_version": claude_agent_sdk.__version__,
                 "cli_version": __cli_version__,
                 "env_removidas": scrubbed,
@@ -350,6 +381,7 @@ async def main_async(args: argparse.Namespace, scrubbed: list[str]) -> int:
             budget_usd=args.budget,
             glossary=glossary,
             transcripts_dir=transcripts_dir,
+            csv_files=csv_files,
         )
         spent += float(record.get("cost_usd") or 0)
         with runs_path.open("a", encoding="utf-8") as fh:
@@ -386,7 +418,13 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, default=Path("evals/precisao/results/full"))
-    parser.add_argument("--arms", default="A,B,C")
+    parser.add_argument("--arms", default="A,B,C,D")
+    parser.add_argument(
+        "--csv-dir",
+        type=Path,
+        default=None,
+        help="pasta dos CSVs do braço D (padrão: a do snapshot do gabarito)",
+    )
     parser.add_argument("--questions", default=",".join(q.qid for q in QUESTIONS))
     parser.add_argument("--reps", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)

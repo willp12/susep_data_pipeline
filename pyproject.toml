@@ -37,6 +37,9 @@ agent = [
 ui = [
     "streamlit>=1.58.0",
 ]
+eval = [
+    "duckdb>=1.5.5",
+]
 
 [build-system]
 requires = ["hatchling"]

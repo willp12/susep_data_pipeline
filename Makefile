@@ -1,5 +1,5 @@
 .PHONY: install lint fmt test run chat chat-ui dbt-build dbt-unit bootstrap clean \
-	eval-truth eval-dry eval-smoke eval eval-score
+	eval-truth eval-csv eval-dry eval-smoke eval eval-score
 
 install:
 	uv sync --all-groups
@@ -34,12 +34,16 @@ dbt-unit:
 	cd dbt && uv run dbt test --select "test_type:unit" --profiles-dir .
 
 # Experimento de precisão e custo por camada (evals/precisao/README.md).
-# Ordem: eval-truth → eval-dry → eval-smoke → eval → eval-score.
+# Ordem: eval-truth → eval-csv → eval-dry → eval-smoke → eval → eval-score.
 EVAL_RESULTS := evals/precisao/results
 EVAL_TRUTH := $(EVAL_RESULTS)/truth.json
 
 eval-truth:
 	uv run python -m evals.precisao.truth --out $(EVAL_TRUTH)
+
+# Baixa o zip do snapshot do gabarito e prepara os CSVs do braço D.
+eval-csv:
+	uv run python -m evals.precisao.csvdata --truth $(EVAL_TRUTH)
 
 eval-dry:
 	uv run python -m evals.precisao.run --dry-run

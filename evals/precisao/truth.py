@@ -70,25 +70,33 @@ def answer_from_rows(question: Question, rows: list[dict[str, Any]]) -> dict[str
     }
 
 
-def differences(mart: dict[str, Any], bronze: dict[str, Any]) -> list[str]:
-    """What differs between the two reference answers; empty when they agree."""
+def differences(
+    mart: dict[str, Any], other: dict[str, Any], *, tolerance: Decimal = Decimal(0)
+) -> list[str]:
+    """What differs between two reference answers; empty when they agree.
+
+    ``tolerance`` is the largest absolute gap accepted in a value (0 = exact).
+    """
+
+    def close(a: Any, b: Any) -> bool:
+        return b is not None and abs(Decimal(a) - Decimal(b)) <= tolerance
+
     diffs: list[str] = []
     for key in ("valor", "mes", "percentual", "v2023", "v2024"):
         if key not in mart:
             continue
-        a, b = mart[key], bronze.get(key)
-        same = a == b if key == "mes" else b is not None and Decimal(a) == Decimal(b)
-        if not same:
-            diffs.append(f"{key}: mart={a} bronze={b}")
+        a, b = mart[key], other.get(key)
+        if not (a == b if key == "mes" else close(a, b)):
+            diffs.append(f"{key}: mart={a} outro={b}")
     if "ranking" in mart:
-        for i, (m, br) in enumerate(zip(mart["ranking"], bronze["ranking"], strict=False), 1):
-            if m["codigo"].strip() != br["codigo"].strip():
-                diffs.append(f"ranking {i}: código mart={m['codigo']} bronze={br['codigo']}")
-            if Decimal(m["valor"]) != Decimal(br["valor"]):
-                diffs.append(f"ranking {i}: valor mart={m['valor']} bronze={br['valor']}")
-            if normalize_name(m["nome"] or "") != normalize_name(br["nome"] or ""):
-                diffs.append(f"ranking {i}: nome mart={m['nome']!r} bronze={br['nome']!r}")
-        if len(mart["ranking"]) != len(bronze["ranking"]):
+        for i, (m, o) in enumerate(zip(mart["ranking"], other["ranking"], strict=False), 1):
+            if m["codigo"].strip() != o["codigo"].strip():
+                diffs.append(f"ranking {i}: código mart={m['codigo']} outro={o['codigo']}")
+            if not close(m["valor"], o["valor"]):
+                diffs.append(f"ranking {i}: valor mart={m['valor']} outro={o['valor']}")
+            if normalize_name(m["nome"] or "") != normalize_name(o["nome"] or ""):
+                diffs.append(f"ranking {i}: nome mart={m['nome']!r} outro={o['nome']!r}")
+        if len(mart["ranking"]) != len(other["ranking"]):
             diffs.append("ranking: tamanhos diferentes")
     return diffs
 
